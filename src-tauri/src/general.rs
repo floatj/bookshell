@@ -14,6 +14,11 @@ pub struct GeneralSettings {
     /// Git view auto-refresh polling interval in seconds (SSH sessions).
     #[serde(default = "default_git_poll_secs")]
     pub git_poll_secs: u32,
+    /// App-wide default shell for new Local connections / side terminal when a
+    /// connection has no shell of its own. None falls back to the platform
+    /// default (powershell.exe on Windows, $SHELL or /bin/bash elsewhere).
+    #[serde(default)]
+    pub default_shell: Option<String>,
 }
 
 impl Default for GeneralSettings {
@@ -23,6 +28,7 @@ impl Default for GeneralSettings {
             font_size: default_font_size(),
             side_font_size: default_side_font_size(),
             git_poll_secs: default_git_poll_secs(),
+            default_shell: None,
         }
     }
 }

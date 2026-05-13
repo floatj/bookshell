@@ -4,6 +4,7 @@ import { api, type Connection, type CommandButton, type TabState } from "../ipc/
 import { C, overlayStyle as baseOverlay, inputStyle, btnPrimary, btnSecondary, btnDanger } from "../theme";
 import { CloseX } from "./CloseX";
 import { general, updateGeneral } from "../stores/general";
+import { platformDefaultShell } from "../stores/connections";
 import {
   activeTabId,
   flushPersistedState,
@@ -154,6 +155,24 @@ function GeneralPane() {
           style={{ ...input, width: "80px" }}
         />
         <span style={{ "font-size": "12px", opacity: 0.7 }}>秒（SSH polling 間隔；local 使用 FS watch 無視此值）</span>
+      </div>
+
+      <label>Default shell</label>
+      <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <input
+          type="text"
+          placeholder={platformDefaultShell()}
+          value={general().default_shell ?? ""}
+          onChange={(e) => {
+            const v = e.currentTarget.value.trim();
+            updateGeneral({ default_shell: v.length > 0 ? v : null });
+          }}
+          style={{ ...input, "min-width": "360px", flex: 1, "font-family": "monospace" }}
+        />
+        <span style={{ "font-size": "12px", opacity: 0.7, "flex-basis": "100%" }}>
+          Used by new Local connections when no per-connection shell is set. Wrap paths with spaces in double quotes,
+          e.g. <code>"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo</code>.
+        </span>
       </div>
 
       <div style={{ "grid-column": "1 / -1", "margin-top": "16px", opacity: 0.6, "font-size": "12px" }}>

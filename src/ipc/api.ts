@@ -232,6 +232,10 @@ export interface GeneralSettings {
   font_size: number;
   side_font_size: number;
   git_poll_secs: number;
+  /** App-wide default shell for new Local connections / side terminal when a
+   *  connection has no shell of its own. null/empty → platform default
+   *  (powershell.exe on Windows, $SHELL or /bin/bash elsewhere). */
+  default_shell?: string | null;
 }
 
 export interface CommandButton {

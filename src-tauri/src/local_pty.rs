@@ -1,3 +1,4 @@
+use crate::general::load_general;
 use crate::logger;
 use crate::ssh::{Cmd, SessionHandle};
 use crate::AppState;
@@ -9,12 +10,29 @@ use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 
 #[cfg(target_os = "windows")]
-fn default_shell() -> String {
+fn platform_default_shell() -> String {
     "powershell.exe".to_string()
 }
 #[cfg(not(target_os = "windows"))]
-fn default_shell() -> String {
+fn platform_default_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+
+/// Resolve the shell field: explicit per-connection > user-configured default
+/// in general.toml > platform default.
+fn resolve_shell(shell: Option<&str>) -> String {
+    if let Some(s) = shell.map(str::trim).filter(|s| !s.is_empty()) {
+        return s.to_string();
+    }
+    if let Some(s) = load_general()
+        .default_shell
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return s.to_string();
+    }
+    platform_default_shell()
 }
 
 fn expand_tilde<S: AsRef<str>>(s: S) -> String {
@@ -29,6 +47,41 @@ fn expand_tilde<S: AsRef<str>>(s: S) -> String {
         }
     }
     s.to_string()
+}
+
+/// Split a shell command string into program + args while respecting
+/// double-quoted segments, so paths containing spaces work:
+///   `"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo`
+/// yields `["C:\Program Files\PowerShell\7\pwsh.exe", "-NoLogo"]`.
+/// Unquoted whitespace separates tokens; backslash is treated literally
+/// (Windows path separator), so no escape handling is needed.
+fn split_shell_command(input: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut has_token = false;
+    for ch in input.chars() {
+        match ch {
+            '"' => {
+                in_quote = !in_quote;
+                has_token = true;
+            }
+            c if c.is_whitespace() && !in_quote => {
+                if has_token {
+                    out.push(std::mem::take(&mut cur));
+                    has_token = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                has_token = true;
+            }
+        }
+    }
+    if has_token {
+        out.push(cur);
+    }
+    out
 }
 
 /// Spawn a local interactive shell on a fresh PTY. The session shows up in
@@ -54,19 +107,14 @@ pub async fn local_open_pty(
         })
         .map_err(|e| format!("openpty: {}", e))?;
 
-    let shell_field = shell
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(default_shell);
+    let shell_field = resolve_shell(shell.as_deref());
 
-    // Whitespace-split the shell field into program + args so users can
-    // type things like `screen.sh 2` or `~/.local/bin/wrap.sh foo`. Tilde
-    // is expanded against $HOME — portable_pty hands the path straight to
-    // the OS exec, which doesn't do any shell expansion.
-    let mut parts = shell_field.split_whitespace();
-    let program_raw = parts.next().unwrap_or("");
+    // Tokenize the shell field into program + args, honoring double quotes
+    // so paths like `"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo` work.
+    // Tilde is expanded against $HOME — portable_pty hands the path straight
+    // to the OS exec, which doesn't do any shell expansion.
+    let mut parts = split_shell_command(&shell_field).into_iter();
+    let program_raw = parts.next().unwrap_or_default();
     let program = expand_tilde(program_raw);
     let args: Vec<String> = parts.map(expand_tilde).collect();
 

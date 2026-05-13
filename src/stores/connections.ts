@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { api, type Connection } from "../ipc/api";
+import { general } from "./general";
 
 const [connections, setConnections] = createSignal<Connection[]>([]);
 
@@ -66,6 +67,13 @@ export function isLinux(): boolean {
   return /linux/i.test(navigator.platform);
 }
 
-export function defaultLocalShell(): string {
+export function platformDefaultShell(): string {
   return isWindows() ? "powershell.exe" : "/bin/bash";
+}
+
+/// User-configured default shell from Settings, or the platform default.
+/// Used as the placeholder/fallback in the Connection editor.
+export function defaultLocalShell(): string {
+  const configured = general().default_shell?.trim();
+  return configured && configured.length > 0 ? configured : platformDefaultShell();
 }
