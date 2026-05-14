@@ -141,6 +141,44 @@ function GeneralPane() {
         <span style={{ "font-size": "12px", opacity: 0.7 }}>px（右側 side terminal）</span>
       </div>
 
+      <label>Side tab bar</label>
+      <div style={{ display: "flex", gap: "10px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <select
+          value={general().side_tab_bar_mode}
+          onChange={(e) => {
+            updateGeneral({ side_tab_bar_mode: e.currentTarget.value as "split" | "hover" });
+          }}
+          style={{ ...input, width: "150px" }}
+        >
+          <option value="split">Split</option>
+          <option value="hover">Hover acrylic</option>
+        </select>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().side_tab_bar_auto_hide}
+            onChange={(e) => updateGeneral({ side_tab_bar_auto_hide: e.currentTarget.checked })}
+          />
+          <span>Auto hide</span>
+        </label>
+      </div>
+
+      <label>Tab bar width</label>
+      <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
+        <input
+          type="number"
+          min="140"
+          max="400"
+          value={general().side_tab_bar_width}
+          onChange={(e) => {
+            const v = Math.max(140, Math.min(400, parseInt(e.currentTarget.value) || 190));
+            updateGeneral({ side_tab_bar_width: v });
+          }}
+          style={{ ...input, width: "80px" }}
+        />
+        <span style={{ "font-size": "12px", opacity: 0.7 }}>px</span>
+      </div>
+
       <label>Git auto-refresh</label>
       <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
         <input

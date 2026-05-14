@@ -23,7 +23,7 @@ import { gitWidth, isGitOpen, setGitWidth, toggleGit } from "./stores/git";
 import { cycleLayout, layoutMode, setLayout } from "./stores/layout";
 import { api, type Connection } from "./ipc/api";
 import { loadConnections } from "./stores/connections";
-import { loadGeneral } from "./stores/general";
+import { general, loadGeneral, updateGeneral } from "./stores/general";
 import { closeSearch, openSearch, searchTabId } from "./stores/search";
 import { C } from "./theme";
 import {
@@ -74,6 +74,24 @@ export default function App() {
   function cancelHide() {
     if (headerHideTimer) { clearTimeout(headerHideTimer); headerHideTimer = undefined; }
     setHeaderHovered(true);
+  }
+
+  const [sideTabHovered, setSideTabHovered] = createSignal(false);
+  const sideTabAutoHide = () => general().side_tab_bar_auto_hide;
+  const sideTabMode = () => general().side_tab_bar_mode;
+  const sideTabVisible = () => !sideTabAutoHide() || sideTabHovered() || tabs().length === 0;
+  let sideTabHideTimer: number | undefined;
+  function scheduleSideTabHide() {
+    if (!sideTabAutoHide()) return;
+    if (sideTabHideTimer) clearTimeout(sideTabHideTimer);
+    sideTabHideTimer = window.setTimeout(() => setSideTabHovered(false), 220);
+  }
+  function cancelSideTabHide() {
+    if (sideTabHideTimer) {
+      clearTimeout(sideTabHideTimer);
+      sideTabHideTimer = undefined;
+    }
+    setSideTabHovered(true);
   }
 
   // Main pane size — natural (pre-scale) dimensions used by Exposé grid.
@@ -472,8 +490,32 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ display: "flex", flex: 1, "min-height": 0 }}>
-        <TabBar onNew={() => setShowDialog(true)} />
+      <div style={{ display: "flex", flex: 1, "min-height": 0, position: "relative" }}>
+        <div
+          onMouseEnter={cancelSideTabHide}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            width: "8px",
+            background: sideTabVisible() ? "transparent" : C.accent,
+            opacity: sideTabVisible() ? 0 : 0.24,
+            "z-index": 7,
+            "pointer-events": sideTabVisible() ? "none" : "auto",
+            transition: "opacity 0.18s",
+          }}
+        />
+        <TabBar
+          onNew={() => setShowDialog(true)}
+          width={general().side_tab_bar_width}
+          mode={sideTabMode()}
+          visible={sideTabVisible()}
+          autoHide={sideTabAutoHide()}
+          onShow={cancelSideTabHide}
+          onHide={scheduleSideTabHide}
+          onWidthChange={(width) => void updateGeneral({ side_tab_bar_width: width })}
+        />
         <div style={{ flex: 1, display: "flex", "flex-direction": "column", "min-width": 0 }}>
           <div style={{
             flex: 1,

@@ -1,6 +1,5 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 
-const [tabBarWidth, setTabBarWidth] = createSignal(190);
 const MIN_W = 140;
 const MAX_W = 400;
 import { C } from "../theme";
@@ -35,6 +34,13 @@ function hexToRgba(hex: string | null | undefined, alpha: number): string {
 
 interface Props {
   onNew: () => void;
+  width: number;
+  mode: "split" | "hover";
+  visible: boolean;
+  autoHide: boolean;
+  onShow: () => void;
+  onHide: () => void;
+  onWidthChange: (width: number) => void;
 }
 
 const statusColor: Record<TabStatus, string> = {
@@ -92,6 +98,7 @@ function shortCwd(p: string): string {
 }
 
 export function TabBar(props: Props) {
+  const [tabBarWidth, setTabBarWidth] = createSignal(props.width);
   const [menu, setMenu] = createSignal<{ x: number; y: number; tab: Tab } | null>(null);
   const [pickerTabId, setPickerTabId] = createSignal<string | null>(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
@@ -99,16 +106,23 @@ export function TabBar(props: Props) {
   const [resizing, setResizing] = createSignal(false);
   /** Tab id under cursor (or "__end__"). Null when not over any drop target. */
   const [dropTargetId, setDropTargetId] = createSignal<string | null>(null);
+  const isHoverMode = () => props.mode === "hover";
+
+  createEffect(() => {
+    setTabBarWidth(clampWidth(props.width));
+  });
 
   function startResize(ev: MouseEvent) {
     ev.preventDefault();
     setResizing(true);
     const startX = ev.clientX;
     const startW = tabBarWidth();
+    let nextW = startW;
     const onMove = (e: MouseEvent) =>
-      setTabBarWidth(Math.max(MIN_W, Math.min(MAX_W, startW + (e.clientX - startX))));
+      setTabBarWidth((nextW = clampWidth(startW + (e.clientX - startX))));
     const onUp = () => {
       setResizing(false);
+      props.onWidthChange(nextW);
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
@@ -235,8 +249,27 @@ export function TabBar(props: Props) {
   }
 
   return (
-    <div style={{ display: "flex", width: `${tabBarWidth()}px`, "flex-shrink": 0 }}>
-    <div style={containerStyle}>
+    <div
+      onMouseEnter={props.onShow}
+      onMouseLeave={() => { if (props.autoHide) props.onHide(); }}
+      style={{
+        display: "flex",
+        width: isHoverMode() || props.visible ? `${tabBarWidth()}px` : "0px",
+        height: "100%",
+        "flex-shrink": 0,
+        position: isHoverMode() ? "absolute" : "relative",
+        top: isHoverMode() ? "0" : undefined,
+        bottom: isHoverMode() ? "0" : undefined,
+        left: isHoverMode() ? "0" : undefined,
+        "z-index": isHoverMode() ? 8 : undefined,
+        transform: props.visible ? "translateX(0)" : "translateX(calc(-100% - 8px))",
+        transition: "width 0.18s ease, transform 0.18s ease",
+        "pointer-events": props.visible ? "auto" : "none",
+        overflow: "hidden",
+        "box-shadow": isHoverMode() && props.visible ? "12px 0 36px rgba(0,0,0,0.35)" : "none",
+      }}
+    >
+    <div style={{ ...containerStyle, ...(isHoverMode() ? acrylicContainerStyle : {}) }}>
       <For each={tabs()}>
         {(t) => (
           <div
@@ -385,6 +418,10 @@ export function TabBar(props: Props) {
   );
 }
 
+function clampWidth(w: number): number {
+  return Math.max(MIN_W, Math.min(MAX_W, Math.round(w || 190)));
+}
+
 const containerStyle = {
   flex: 1,
   background: C.bg2,
@@ -394,6 +431,14 @@ const containerStyle = {
   gap: "1px",
   "overflow-y": "auto",
   "min-width": 0,
+} as const;
+
+const acrylicContainerStyle = {
+  background: "rgba(28,28,30,0.62)",
+  "backdrop-filter": "blur(24px) saturate(180%)",
+  "-webkit-backdrop-filter": "blur(24px) saturate(180%)",
+  border: `1px solid ${C.border}`,
+  "border-left": "none",
 } as const;
 
 const tabStyle = {

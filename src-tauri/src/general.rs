@@ -4,6 +4,13 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SideTabBarMode {
+    Split,
+    Hover,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralSettings {
     #[serde(default = "default_scrollback")]
     pub scrollback: u32,
@@ -19,6 +26,15 @@ pub struct GeneralSettings {
     /// default (powershell.exe on Windows, $SHELL or /bin/bash elsewhere).
     #[serde(default)]
     pub default_shell: Option<String>,
+    /// Whether the left tab bar reserves layout space or floats over the app.
+    #[serde(default = "default_side_tab_bar_mode")]
+    pub side_tab_bar_mode: SideTabBarMode,
+    /// Hide the left tab bar until the pointer enters the left trigger strip.
+    #[serde(default = "default_side_tab_bar_auto_hide")]
+    pub side_tab_bar_auto_hide: bool,
+    /// Width of the left tab bar in CSS pixels.
+    #[serde(default = "default_side_tab_bar_width")]
+    pub side_tab_bar_width: u32,
 }
 
 impl Default for GeneralSettings {
@@ -29,6 +45,9 @@ impl Default for GeneralSettings {
             side_font_size: default_side_font_size(),
             git_poll_secs: default_git_poll_secs(),
             default_shell: None,
+            side_tab_bar_mode: default_side_tab_bar_mode(),
+            side_tab_bar_auto_hide: default_side_tab_bar_auto_hide(),
+            side_tab_bar_width: default_side_tab_bar_width(),
         }
     }
 }
@@ -44,6 +63,15 @@ fn default_side_font_size() -> u32 {
 }
 fn default_git_poll_secs() -> u32 {
     5
+}
+fn default_side_tab_bar_mode() -> SideTabBarMode {
+    SideTabBarMode::Split
+}
+fn default_side_tab_bar_auto_hide() -> bool {
+    false
+}
+fn default_side_tab_bar_width() -> u32 {
+    190
 }
 
 pub fn general_path() -> PathBuf {

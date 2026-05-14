@@ -236,6 +236,9 @@ export interface GeneralSettings {
    *  connection has no shell of its own. null/empty → platform default
    *  (powershell.exe on Windows, $SHELL or /bin/bash elsewhere). */
   default_shell?: string | null;
+  side_tab_bar_mode: "split" | "hover";
+  side_tab_bar_auto_hide: boolean;
+  side_tab_bar_width: number;
 }
 
 export interface CommandButton {
