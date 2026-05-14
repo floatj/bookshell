@@ -20,7 +20,18 @@ import {
   type TabStatus,
 } from "../stores/tabs";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { ColorPickerDialog } from "./ColorPickerDialog";
 import { api } from "../ipc/api";
+
+/** Convert a hex color to rgba with the given alpha. Falls back to transparent
+ *  if parsing fails so a bad value never breaks the tab render. */
+function hexToRgba(hex: string | null | undefined, alpha: number): string {
+  if (!hex) return "transparent";
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 0xff},${(n >> 8) & 0xff},${n & 0xff},${alpha})`;
+}
 
 interface Props {
   onNew: () => void;
@@ -40,14 +51,28 @@ const statusGlyph: Record<TabStatus, string> = {
   error: "!",
 };
 
-const COLORS = [
-  { name: "Default", value: null },
-  { name: "Red",    value: C.red    },
-  { name: "Orange", value: C.orange },
-  { name: "Yellow", value: C.yellow },
-  { name: "Green",  value: C.green  },
-  { name: "Blue",   value: C.accent },
-  { name: "Purple", value: C.purple },
+/** 4×4 palette of preset tab colors. Tuned to read clearly on the dark
+ *  macOS-style background; each row roughly groups warm → cool → neutral. */
+const PRESET_COLORS: { name: string; value: string }[] = [
+  { name: "Red",       value: "#ff453a" },
+  { name: "Coral",     value: "#ff6f61" },
+  { name: "Orange",    value: "#ff9f0a" },
+  { name: "Amber",     value: "#ffb340" },
+
+  { name: "Yellow",    value: "#ffd60a" },
+  { name: "Lime",      value: "#9beb52" },
+  { name: "Green",     value: "#30d158" },
+  { name: "Teal",      value: "#40c8c0" },
+
+  { name: "Cyan",      value: "#5ac8fa" },
+  { name: "Sky",       value: "#64d2ff" },
+  { name: "Blue",      value: "#0a84ff" },
+  { name: "Indigo",    value: "#5e5ce6" },
+
+  { name: "Purple",    value: "#bf5af2" },
+  { name: "Magenta",   value: "#ff2d92" },
+  { name: "Pink",      value: "#ff8aa8" },
+  { name: "Graphite",  value: "#9aa0a6" },
 ];
 
 const ICONS = [
@@ -68,6 +93,7 @@ function shortCwd(p: string): string {
 
 export function TabBar(props: Props) {
   const [menu, setMenu] = createSignal<{ x: number; y: number; tab: Tab } | null>(null);
+  const [pickerTabId, setPickerTabId] = createSignal<string | null>(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [draggingId, setDraggingId] = createSignal<string | null>(null);
   const [resizing, setResizing] = createSignal(false);
@@ -149,10 +175,20 @@ export function TabBar(props: Props) {
       },
       {
         label: "Color",
-        submenu: COLORS.map((c) => ({
-          label: c.name + (tab.color === c.value ? "  ✓" : ""),
-          onClick: () => setTabColor(tab.id, c.value),
-        })),
+        swatch: tab.color ?? null,
+        customSubmenu: (close) => (
+          <ColorPaletteGrid
+            current={tab.color ?? null}
+            onPick={(c) => {
+              setTabColor(tab.id, c);
+              close();
+            }}
+            onCustomize={() => {
+              setPickerTabId(tab.id);
+              close();
+            }}
+          />
+        ),
       },
       {
         label: "Icon",
@@ -224,8 +260,7 @@ export function TabBar(props: Props) {
             tabindex={t.id === activeTabId() ? 0 : -1}
             style={{
               ...tabStyle,
-              background: t.id === activeTabId() ? C.bgActive : "transparent",
-              "border-left-color": t.color ?? "transparent",
+              ...tabColorStyle(t.color, t.id === activeTabId()),
               opacity: draggingId() === t.id ? 0.35 : 1,
               "border-top": dropTargetId() === t.id && draggingId() && draggingId() !== t.id
                 ? `2px solid ${C.accent}`
@@ -247,7 +282,18 @@ export function TabBar(props: Props) {
             <Show
               when={renamingId() === t.id}
               fallback={
-                <span style={{ flex: 1, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: "hidden",
+                    "text-overflow": "ellipsis",
+                    "white-space": "nowrap",
+                    color: t.color
+                      ? (t.id === activeTabId() ? t.color : hexToRgba(t.color, 0.85))
+                      : C.text,
+                    "font-weight": t.color && t.id === activeTabId() ? 600 : 400,
+                  }}
+                >
                   {t.name}
                 </span>
               }
@@ -308,6 +354,19 @@ export function TabBar(props: Props) {
           />
         )}
       </Show>
+
+      <Show when={pickerTabId()}>
+        {(id) => {
+          const t = tabs().find((x) => x.id === id());
+          return (
+            <ColorPickerDialog
+              initial={t?.color ?? null}
+              onSave={(c) => setTabColor(id(), c)}
+              onClose={() => setPickerTabId(null)}
+            />
+          );
+        }}
+      </Show>
     </div>
     {/* right-edge drag handle */}
     <div
@@ -345,10 +404,20 @@ const tabStyle = {
   cursor: "grab",
   "font-size": "12px",
   color: C.text,
-  "border-left": "3px solid transparent",
   "user-select": "none",
-  transition: "background 0.1s",
+  position: "relative" as const,
+  transition: "background 0.12s ease",
 } as const;
+
+/** Build the dynamic part of a tab's style: a flat solid tint of the chosen
+ *  color across the whole tab. Active tabs get a slightly stronger alpha so
+ *  they still stand out against their inactive siblings. */
+function tabColorStyle(color: string | null | undefined, active: boolean) {
+  if (!color) {
+    return { background: active ? C.bgActive : "transparent" };
+  }
+  return { background: hexToRgba(color, active ? 0.32 : 0.18) };
+}
 
 const tabTopRowStyle = {
   display: "flex",
@@ -401,3 +470,85 @@ const newBtnStyle = {
   "margin-top": "4px",
   transition: "color 0.1s, border-color 0.1s",
 } as const;
+
+interface PaletteProps {
+  current: string | null;
+  onPick: (color: string | null) => void;
+  onCustomize: () => void;
+}
+
+function ColorPaletteGrid(props: PaletteProps) {
+  const isSelected = (v: string | null) =>
+    (props.current ?? null)?.toLowerCase() === (v ?? null)?.toLowerCase();
+
+  return (
+    <div style={{ display: "flex", "flex-direction": "column", gap: "10px", "min-width": "188px" }}>
+      <div style={{ display: "grid", "grid-template-columns": "repeat(4, 36px)", gap: "6px" }}>
+        <For each={PRESET_COLORS}>
+          {(c) => (
+            <button
+              title={c.name}
+              onClick={() => props.onPick(c.value)}
+              style={{
+                width: "36px",
+                height: "36px",
+                "border-radius": "8px",
+                border: isSelected(c.value)
+                  ? `2px solid ${C.text}`
+                  : `1px solid rgba(255,255,255,0.08)`,
+                background: c.value,
+                cursor: "pointer",
+                padding: 0,
+                "box-shadow": isSelected(c.value)
+                  ? `0 0 0 2px rgba(0,0,0,0.4), 0 0 12px ${c.value}80`
+                  : "inset 0 1px 0 rgba(255,255,255,0.15)",
+                transition: "transform 0.08s ease, box-shadow 0.15s",
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.transform = "scale(1.08)")}
+              onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}
+            />
+          )}
+        </For>
+      </div>
+
+      <div style={{ display: "flex", gap: "6px" }}>
+        <button
+          onClick={() => props.onPick(null)}
+          style={{
+            flex: 1,
+            background: isSelected(null) ? C.bgActive : "transparent",
+            color: C.text,
+            border: `1px solid ${C.border}`,
+            "border-radius": "6px",
+            padding: "6px 8px",
+            "font-size": "12px",
+            cursor: "pointer",
+          }}
+          onMouseOver={(e) => (e.currentTarget.style.background = C.bgHover)}
+          onMouseOut={(e) =>
+            (e.currentTarget.style.background = isSelected(null) ? C.bgActive : "transparent")
+          }
+        >
+          Default
+        </button>
+        <button
+          onClick={() => props.onCustomize()}
+          style={{
+            flex: 1,
+            background: "transparent",
+            color: C.text,
+            border: `1px solid ${C.border}`,
+            "border-radius": "6px",
+            padding: "6px 8px",
+            "font-size": "12px",
+            cursor: "pointer",
+          }}
+          onMouseOver={(e) => (e.currentTarget.style.background = C.bgHover)}
+          onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+        >
+          🎨 Customize…
+        </button>
+      </div>
+    </div>
+  );
+}
