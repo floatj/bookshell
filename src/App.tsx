@@ -27,7 +27,6 @@ import { loadGeneral } from "./stores/general";
 import { closeSearch, openSearch, searchTabId } from "./stores/search";
 import { C } from "./theme";
 import {
-  activeTab,
   activeTabId,
   addTab,
   closeMarkCwd,
@@ -60,6 +59,22 @@ export default function App() {
   const [showLogs, setShowLogs] = createSignal(false);
   const [colDragging, setColDragging] = createSignal(false);
   const [appVersion, setAppVersion] = createSignal("");
+
+  // Auto-hide toolbar state. Pinned = keep visible until toggled off; hovered =
+  // mouse is in the trigger zone or over the bar itself; auto-shown when no
+  // tabs exist so the user can always find "+ Connect".
+  const [headerPinned, setHeaderPinned] = createSignal(false);
+  const [headerHovered, setHeaderHovered] = createSignal(false);
+  const headerVisible = () => headerPinned() || headerHovered() || tabs().length === 0;
+  let headerHideTimer: number | undefined;
+  function scheduleHide() {
+    if (headerHideTimer) clearTimeout(headerHideTimer);
+    headerHideTimer = window.setTimeout(() => setHeaderHovered(false), 220);
+  }
+  function cancelHide() {
+    if (headerHideTimer) { clearTimeout(headerHideTimer); headerHideTimer = undefined; }
+    setHeaderHovered(true);
+  }
 
   // Main pane size — natural (pre-scale) dimensions used by Exposé grid.
   let mainPaneRef: HTMLDivElement | undefined;
@@ -199,6 +214,14 @@ export default function App() {
         return;
       }
 
+      // Ctrl+Shift+H: pin / unpin the auto-hide toolbar. Available even in
+      // passthrough so the user is never stranded without the toolbar.
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "h") {
+        e.preventDefault();
+        setHeaderPinned((v) => !v);
+        return;
+      }
+
       // In passthrough mode, all other GUI hotkeys are released so the remote
       // agent (Claude Code, etc.) can use them.
       if (isActiveTabPassthrough()) return;
@@ -309,44 +332,57 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: "flex", "flex-direction": "column", height: "100%" }}>
-      <div style={headerStyle}>
-        {/* macOS traffic lights */}
-        <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-shrink": 0 }}>
-          <div style={{ width: "12px", height: "12px", "border-radius": "50%", background: C.tRed }} />
-          <div style={{ width: "12px", height: "12px", "border-radius": "50%", background: C.tYellow }} />
-          <div style={{ width: "12px", height: "12px", "border-radius": "50%", background: C.tGreen }} />
-        </div>
+    <div style={{ display: "flex", "flex-direction": "column", height: "100%", position: "relative" }}>
+      {/* Top hover trigger — a thin strip that catches the mouse near the top
+          edge so the auto-hide toolbar can slide down. Also doubles as a
+          subtle accent hint that something lives up there. Pointer-events are
+          off when the bar is pinned/visible so it doesn't block clicks on the
+          buttons immediately below. */}
+      <div
+        onMouseEnter={cancelHide}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: "6px",
+          background: headerVisible() ? "transparent" : C.accent,
+          opacity: headerVisible() ? 0 : 0.25,
+          "z-index": 9,
+          "pointer-events": headerVisible() ? "none" : "auto",
+          transition: "opacity 0.18s",
+        }}
+      />
 
-        <strong style={{ color: C.accent, "font-size": "13px", "letter-spacing": "0.04em" }}>BOOKSHELL</strong>
-
-        <Show when={activeTab()}>
-          {(t) => (
-            <span style={{ "font-size": "12px", color: C.text2, display: "flex", "align-items": "center", gap: "6px" }}>
-              <span style={{ color: t().status === "connected" ? C.green : C.yellow }}>
-                {t().status === "connected" ? "●" : "◐"} {t().status}
-              </span>
-              <Show when={t().errorMessage}>
-                <span style={{ color: C.red }}>{t().errorMessage}</span>
-              </Show>
-              <Show when={t().passthrough}>
-                <span
-                  title="AI passthrough on (Ctrl+Shift+P to disable)"
-                  style={{
-                    background: C.purple,
-                    color: "#fff",
-                    padding: "1px 7px",
-                    "border-radius": "10px",
-                    "font-size": "11px",
-                    "font-weight": 600,
-                  }}
-                >
-                  🤖 passthrough
-                </span>
-              </Show>
-            </span>
-          )}
-        </Show>
+      <div
+        onMouseEnter={cancelHide}
+        onMouseLeave={() => { if (!headerPinned()) scheduleHide(); }}
+        style={{
+          ...headerStyle,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          "z-index": 10,
+          transform: headerVisible() ? "translateY(0)" : "translateY(-100%)",
+          transition: "transform 0.18s ease-out",
+          "box-shadow": headerVisible() ? "0 2px 8px rgba(0,0,0,0.35)" : "none",
+        }}
+      >
+        <div style={{ display: "flex", gap: "4px", "align-items": "center", width: "100%" }}>
+          <button
+            onClick={() => setHeaderPinned((v) => !v)}
+            style={{
+              ...toolBtn,
+              color: headerPinned() ? C.accent : C.text3,
+              border: `1px solid ${headerPinned() ? C.accentBdr : C.border}`,
+              background: headerPinned() ? C.accentBg : "transparent",
+              padding: "3px 7px",
+            }}
+            title={headerPinned() ? "Unpin toolbar (Ctrl+Shift+H)" : "Pin toolbar (Ctrl+Shift+H)"}
+          >
+            {headerPinned() ? "📌" : "📍"}
+          </button>
 
         {/* right-side toolbar */}
         <div style={{ "margin-left": "auto", display: "flex", gap: "4px", "align-items": "center" }}>
@@ -432,6 +468,7 @@ export default function App() {
               v{appVersion()}
             </span>
           </Show>
+        </div>
         </div>
       </div>
 
