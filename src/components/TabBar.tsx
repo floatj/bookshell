@@ -103,6 +103,7 @@ export function TabBar(props: Props) {
   const [pickerTabId, setPickerTabId] = createSignal<string | null>(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [draggingId, setDraggingId] = createSignal<string | null>(null);
+  const [hoveredTabId, setHoveredTabId] = createSignal<string | null>(null);
   const [resizing, setResizing] = createSignal(false);
   /** Tab id under cursor (or "__end__"). Null when not over any drop target. */
   const [dropTargetId, setDropTargetId] = createSignal<string | null>(null);
@@ -278,6 +279,8 @@ export function TabBar(props: Props) {
             onClick={() => setActiveTab(t.id)}
             onDblClick={() => setRenamingId(t.id)}
             onContextMenu={(e) => openMenu(e, t)}
+            onMouseEnter={() => setHoveredTabId(t.id)}
+            onMouseLeave={() => setHoveredTabId((id) => id === t.id ? null : id)}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
@@ -293,7 +296,7 @@ export function TabBar(props: Props) {
             tabindex={t.id === activeTabId() ? 0 : -1}
             style={{
               ...tabStyle,
-              ...tabColorStyle(t.color, t.id === activeTabId()),
+              ...tabColorStyle(t.color, t.id === activeTabId(), hoveredTabId() === t.id),
               opacity: draggingId() === t.id ? 0.35 : 1,
               "border-top": dropTargetId() === t.id && draggingId() && draggingId() !== t.id
                 ? `2px solid ${C.accent}`
@@ -457,11 +460,11 @@ const tabStyle = {
 /** Build the dynamic part of a tab's style: a flat solid tint of the chosen
  *  color across the whole tab. Active tabs get a slightly stronger alpha so
  *  they still stand out against their inactive siblings. */
-function tabColorStyle(color: string | null | undefined, active: boolean) {
+function tabColorStyle(color: string | null | undefined, active: boolean, hovered: boolean) {
   if (!color) {
-    return { background: active ? C.bgActive : "transparent" };
+    return { background: active ? C.bgActive : hovered ? C.bgHover : "transparent" };
   }
-  return { background: hexToRgba(color, active ? 0.32 : 0.18) };
+  return { background: hexToRgba(color, active ? (hovered ? 0.38 : 0.32) : hovered ? 0.25 : 0.18) };
 }
 
 const tabTopRowStyle = {
