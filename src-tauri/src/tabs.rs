@@ -21,6 +21,9 @@ pub struct TabState {
     /// remembers the user's preferred width across sessions.
     #[serde(default)]
     pub git_width: Option<u32>,
+    /// Per-tab font size override (px). None = inherit global `font_size`.
+    #[serde(default)]
+    pub font_size: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

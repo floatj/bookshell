@@ -23,8 +23,18 @@ export interface Tab {
   cwd?: string | null;
   /** Persisted per-tab width (px) of the right-side Git panel. */
   gitWidth?: number | null;
+  /** Per-tab font size override (px). null/undefined = inherit global. */
+  fontSize?: number | null;
   /** monotonic counter to nudge consumers when tab needs to refit */
   fitTick: number;
+}
+
+export const FONT_MIN = 6;
+export const FONT_MAX = 48;
+export const FONT_STEP = 2;
+export const FONT_DEFAULT = 14;
+export function clampFont(n: number): number {
+  return Math.max(FONT_MIN, Math.min(FONT_MAX, Math.round(n)));
 }
 
 interface TabsState {
@@ -130,6 +140,10 @@ export function setTabCwd(id: string, cwd: string | null) {
 
 export function setTabGitWidth(id: string, width: number) {
   updateTab(id, { gitWidth: width });
+}
+
+export function setTabFontSize(id: string, size: number | null) {
+  updateTab(id, { fontSize: size === null ? null : clampFont(size) });
 }
 
 export async function captureCwd(tabId: string): Promise<string | null> {
@@ -413,6 +427,7 @@ function snapshot(): { tabs: TabState[]; active_tab_id: string | null } {
       passthrough: t.passthrough,
       cwd: t.cwd ?? null,
       git_width: t.gitWidth ?? null,
+      font_size: t.fontSize ?? null,
     })),
     active_tab_id: state.activeTabId,
   };
@@ -438,6 +453,7 @@ createEffect(() => {
     void t.passthrough;
     void t.cwd;
     void t.gitWidth;
+    void t.fontSize;
   });
   void state.activeTabId;
   scheduleSave();
@@ -471,6 +487,7 @@ export async function restoreTabs(): Promise<string[] | null> {
       passthrough: t.passthrough,
       cwd: t.cwd ?? null,
       gitWidth: t.git_width ?? null,
+      fontSize: t.font_size ?? null,
       fitTick: 0,
     })),
   );

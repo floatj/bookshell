@@ -40,8 +40,12 @@ import {
   reconnectTabFromProfile,
   restoreTabs,
   setActiveTab,
+  setTabFontSize,
   tabs,
   toggleTabPassthrough,
+  clampFont,
+  FONT_STEP,
+  FONT_DEFAULT,
 } from "./stores/tabs";
 
 const LAYOUT_LABEL: Record<string, string> = {
@@ -303,6 +307,31 @@ export default function App() {
         if (idx < list.length) {
           e.preventDefault();
           setActiveTab(list[idx].id);
+        }
+      }
+      // Font zoom: Ctrl + (+/=) larger, Ctrl + - smaller, Ctrl + 0 reset.
+      // Hold Shift to act on the global default instead of the active tab.
+      // Match on e.code so Shift-modified glyphs (=/+, -/_, 0/)) and keyboard
+      // layouts don't change the trigger; numpad keys also work.
+      const isZoomIn = e.code === "Equal" || e.code === "NumpadAdd";
+      const isZoomOut = e.code === "Minus" || e.code === "NumpadSubtract";
+      const isZoomReset = e.code === "Digit0" || e.code === "Numpad0";
+      if (e.ctrlKey && !e.altKey && (isZoomIn || isZoomOut || isZoomReset)) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          const cur = general().font_size;
+          if (isZoomReset) updateGeneral({ font_size: FONT_DEFAULT });
+          else updateGeneral({ font_size: clampFont(cur + (isZoomOut ? -FONT_STEP : FONT_STEP)) });
+        } else {
+          const id = activeTabId();
+          if (!id) return;
+          if (isZoomReset) {
+            setTabFontSize(id, null);
+          } else {
+            const tab = tabs().find((t) => t.id === id);
+            const cur = tab?.fontSize ?? general().font_size;
+            setTabFontSize(id, cur + (isZoomOut ? -FONT_STEP : FONT_STEP));
+          }
         }
       }
     });

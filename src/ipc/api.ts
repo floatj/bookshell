@@ -214,6 +214,7 @@ export interface TabState {
   passthrough: boolean;
   cwd?: string | null;
   git_width?: number | null;
+  font_size?: number | null;
 }
 
 export interface TabsFile {

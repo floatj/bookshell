@@ -172,7 +172,7 @@ export function TerminalView(props: Props) {
     term = new Terminal({
       cursorBlink: true,
       fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
-      fontSize: general().font_size,
+      fontSize: props.tab.fontSize ?? general().font_size,
       scrollback: general().scrollback,
       allowProposedApi: true,
       theme: xtermTheme,
@@ -207,9 +207,14 @@ export function TerminalView(props: Props) {
     // it bubbles up to the window-level handler in App.tsx.
     //   Ctrl+F            — search
     //   Ctrl+Shift+E      — Mission Control / Exposé
+    //   Ctrl(+Shift)+ +/-/=/0 — font size zoom (per-tab / global)
     term.attachCustomKeyEventHandler((e) => {
       if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "f") return false;
       if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") return false;
+      if (e.ctrlKey && !e.altKey && (
+        e.code === "Equal" || e.code === "Minus" || e.code === "Digit0" ||
+        e.code === "NumpadAdd" || e.code === "NumpadSubtract" || e.code === "Numpad0"
+      )) return false;
       return true;
     });
 
@@ -492,7 +497,7 @@ export function TerminalView(props: Props) {
   createEffect(() => {
     if (!term) return;
     term.options.scrollback = general().scrollback;
-    term.options.fontSize = general().font_size;
+    term.options.fontSize = props.tab.fontSize ?? general().font_size;
     queueMicrotask(() => fit?.fit());
   });
 
