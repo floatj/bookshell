@@ -7,7 +7,13 @@ import { ExposeView } from "./components/ExposeView";
 import { GitPanel } from "./components/GitPanel";
 import { LogViewer } from "./components/LogViewer";
 import { SideTerminalPanel } from "./components/SideTerminal";
-import { closeExpose, isExposeOpen, toggleExpose, zoomingTabId } from "./stores/expose";
+import {
+  closeExpose,
+  isExposeOpen,
+  openExpose,
+  toggleExpose,
+  zoomingTabId,
+} from "./stores/expose";
 import { isSideTermOpen, toggleSideTerm } from "./stores/sideTerm";
 import { MarkCwdDialog } from "./components/MarkCwdDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -161,6 +167,7 @@ export default function App() {
           (e.key === "PageUp" || e.key === "PageDown");
         if (!shiftCombo && !ctrlCombo) return;
         if (isActiveTabPassthrough()) return;
+        if (isExposeOpen()) return;
         // xterm's own input is a hidden <textarea>, so we can't blanket-skip
         // text inputs — instead, allow if focus is inside an .xterm container,
         // and skip only "real" inputs (search box, rename field, dialogs).
@@ -196,6 +203,18 @@ export default function App() {
       // agent (Claude Code, etc.) can use them.
       if (isActiveTabPassthrough()) return;
 
+      // Exposé takes over the window: only Ctrl+Shift+E (toggle, handled
+      // below) and Esc (handled by ExposeView itself) work. All other
+      // GUI hotkeys (new tab, close tab, search, Ctrl+1..9) would mutate
+      // state under the overlay where the user can't see the effect.
+      if (isExposeOpen()) {
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "e") {
+          e.preventDefault();
+          toggleExpose();
+        }
+        return;
+      }
+
       // Ctrl+Shift+T: new tab
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
         e.preventDefault();
@@ -228,11 +247,12 @@ export default function App() {
           else openSearch(id);
         }
       }
-      // Ctrl+Shift+E: toggle Mission Control / Exposé grid
+      // Ctrl+Shift+E: open Mission Control / Exposé grid. Close path is
+      // handled in the early-return branch above (when isExposeOpen()).
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "e") {
-        if (tabs().length >= 2 || isExposeOpen()) {
+        if (tabs().length >= 2) {
           e.preventDefault();
-          toggleExpose();
+          openExpose();
         }
       }
       // Ctrl+1..9: jump to tab by index
@@ -346,7 +366,7 @@ export default function App() {
               border: `1px solid ${isExposeOpen() ? C.accentBdr : C.border}`,
             }}
             title="Exposé — show all tabs (Ctrl+Shift+E)"
-            disabled={tabs().length < 2}
+            disabled={tabs().length < 2 && !isExposeOpen()}
           >
             ▦ Expose
           </button>

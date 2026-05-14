@@ -201,11 +201,15 @@ export function TerminalView(props: Props) {
     term.open(host);
     fit.fit();
 
-    // Ctrl+F must reach App.tsx's search handler. xterm would otherwise swallow
-    // it in the capture phase and forward ^F to the shell. Returning false here
-    // tells xterm to skip the event entirely and let it bubble normally.
+    // Some GUI hotkeys collide with xterm's keyboard handling — xterm would
+    // otherwise swallow them in the capture phase and forward the ^x byte to
+    // the shell. Returning false tells xterm to skip the event entirely so
+    // it bubbles up to the window-level handler in App.tsx.
+    //   Ctrl+F            — search
+    //   Ctrl+Shift+E      — Mission Control / Exposé
     term.attachCustomKeyEventHandler((e) => {
       if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "f") return false;
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") return false;
       return true;
     });
 
@@ -415,7 +419,11 @@ export function TerminalView(props: Props) {
     onCleanup(() => host.removeEventListener("mousedown", onMouseDown));
 
     const ro = new ResizeObserver(() => {
-      if (props.active) fit?.fit();
+      // Skip fit in grid mode — the host's natural size is held constant via
+      // `width/height: ${natural}px` styles and visually shrunk with a
+      // transform, so we don't want xterm to reflow rows/cols (which would
+      // signal a resize to the PTY).
+      if (props.active && !props.gridLayout) fit?.fit();
     });
     ro.observe(host);
     onCleanup(() => ro.disconnect());
@@ -488,16 +496,20 @@ export function TerminalView(props: Props) {
     queueMicrotask(() => fit?.fit());
   });
 
-  // When entering grid mode (Exposé), force a redraw of every terminal —
+  // When ENTERING grid mode (Exposé), force a redraw of every terminal —
   // xterm-webgl skips draws while the element is hidden, so non-active tabs
-  // would otherwise show a blank canvas. Refresh after a frame so the
-  // wrapper's new visibility/position has settled.
+  // would otherwise show a blank canvas. Refresh once per transition; not on
+  // every gridLayout recompute (the layout object changes on window resize
+  // / cell-rect updates and refresh() is not free).
+  let gridWasOpen = false;
   createEffect(() => {
-    if (props.gridLayout && term) {
+    const inGrid = !!props.gridLayout;
+    if (inGrid && !gridWasOpen && term) {
       requestAnimationFrame(() => {
         try { term?.refresh(0, term.rows - 1); } catch {}
       });
     }
+    gridWasOpen = inGrid;
   });
 
   // When search opens for this tab, focus the input

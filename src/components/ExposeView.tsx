@@ -56,9 +56,13 @@ export function ExposeView(props: Props) {
     props.onCellRects(rects);
   }
 
-  // Recompute on mount, on resize, and when tabs change (For mounts/unmounts cells).
+  // Recompute on mount, on resize, and when tabs change. rAF (not
+  // queueMicrotask) so the browser has run a layout pass — cells using
+  // `aspect-ratio` + `grid-template-columns: auto-fit minmax(...)` don't
+  // resolve their final size until after layout, and microtasks fire
+  // before that.
   onMount(() => {
-    queueMicrotask(recomputeRects);
+    requestAnimationFrame(recomputeRects);
     const ro = new ResizeObserver(recomputeRects);
     if (gridRef) ro.observe(gridRef);
     window.addEventListener("resize", recomputeRects);
@@ -71,7 +75,7 @@ export function ExposeView(props: Props) {
   // Re-report rects whenever the tab list changes.
   createEffect(() => {
     void tabs().length;
-    queueMicrotask(recomputeRects);
+    requestAnimationFrame(recomputeRects);
   });
 
   // Esc to dismiss. Background click handled on the backdrop div.
