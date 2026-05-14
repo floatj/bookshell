@@ -3,9 +3,11 @@ import { getVersion } from "@tauri-apps/api/app";
 import { ButtonEditor } from "./components/ButtonEditor";
 import { CommandBar } from "./components/CommandBar";
 import { ConnectionDialog } from "./components/ConnectionDialog";
+import { ExposeView } from "./components/ExposeView";
 import { GitPanel } from "./components/GitPanel";
 import { LogViewer } from "./components/LogViewer";
 import { SideTerminalPanel } from "./components/SideTerminal";
+import { closeExpose, isExposeOpen, toggleExpose, zoomingTabId } from "./stores/expose";
 import { isSideTermOpen, toggleSideTerm } from "./stores/sideTerm";
 import { MarkCwdDialog } from "./components/MarkCwdDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -43,6 +45,8 @@ const LAYOUT_LABEL: Record<string, string> = {
   "right-split": "⊞ Right",
 };
 
+interface CellRect { x: number; y: number; w: number; h: number; }
+
 export default function App() {
   const [showDialog, setShowDialog] = createSignal(false);
   const [showButtonEditor, setShowButtonEditor] = createSignal(false);
@@ -50,6 +54,11 @@ export default function App() {
   const [showLogs, setShowLogs] = createSignal(false);
   const [colDragging, setColDragging] = createSignal(false);
   const [appVersion, setAppVersion] = createSignal("");
+
+  // Main pane size — natural (pre-scale) dimensions used by Exposé grid.
+  let mainPaneRef: HTMLDivElement | undefined;
+  const [mainPaneSize, setMainPaneSize] = createSignal({ w: 0, h: 0 });
+  const [cellRects, setCellRects] = createSignal<Map<string, CellRect>>(new Map());
 
   function startColDrag(ev: MouseEvent) {
     ev.preventDefault();
@@ -99,6 +108,17 @@ export default function App() {
 
   onMount(() => {
     getVersion().then(setAppVersion).catch(() => {});
+
+    // Track main pane size for Exposé's natural-size calculations.
+    if (mainPaneRef) {
+      const measure = () => {
+        const r = mainPaneRef!.getBoundingClientRect();
+        setMainPaneSize({ w: r.width, h: r.height });
+      };
+      measure();
+      const ro = new ResizeObserver(measure);
+      ro.observe(mainPaneRef);
+    }
 
     // Connections must be loaded before tab restore so reconnect can find profiles.
     (async () => {
@@ -208,6 +228,13 @@ export default function App() {
           else openSearch(id);
         }
       }
+      // Ctrl+Shift+E: toggle Mission Control / Exposé grid
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "e") {
+        if (tabs().length >= 2 || isExposeOpen()) {
+          e.preventDefault();
+          toggleExpose();
+        }
+      }
       // Ctrl+1..9: jump to tab by index
       if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key) - 1;
@@ -309,6 +336,21 @@ export default function App() {
             </button>
           </Show>
           <button
+            onClick={() => {
+              if (tabs().length >= 2 || isExposeOpen()) toggleExpose();
+            }}
+            style={{
+              ...toolBtn,
+              background: isExposeOpen() ? C.accentBg : "transparent",
+              color: isExposeOpen() ? C.accent : C.text2,
+              border: `1px solid ${isExposeOpen() ? C.accentBdr : C.border}`,
+            }}
+            title="Exposé — show all tabs (Ctrl+Shift+E)"
+            disabled={tabs().length < 2}
+          >
+            ▦ Expose
+          </button>
+          <button
             onClick={() => { const id = activeTabId(); if (id) toggleSideTerm(id); }}
             style={{
               ...toolBtn,
@@ -382,7 +424,10 @@ export default function App() {
             "min-height": 0,
             "flex-direction": layoutMode() === "vertical" ? "column" : "row",
           }}>
-            <div style={{ flex: 1, position: "relative", "min-width": 0, "min-height": 0 }}>
+            <div
+              ref={mainPaneRef}
+              style={{ flex: 1, position: "relative", "min-width": 0, "min-height": 0 }}
+            >
               <Show
                 when={tabs().length > 0}
                 fallback={
@@ -393,7 +438,44 @@ export default function App() {
                 }
               >
                 <For each={tabs()}>
-                  {(t) => <TerminalView tab={t} active={t.id === activeTabId()} />}
+                  {(t) => {
+                    const gridLayout = () => {
+                      if (!isExposeOpen()) return null;
+                      const nat = mainPaneSize();
+                      if (nat.w === 0 || nat.h === 0) return null;
+                      // Zooming tab animates to the full main-pane rect (scale 1).
+                      if (zoomingTabId() === t.id && mainPaneRef) {
+                        const r = mainPaneRef.getBoundingClientRect();
+                        return {
+                          cellX: r.left,
+                          cellY: r.top,
+                          naturalW: nat.w,
+                          naturalH: nat.h,
+                          scale: 1,
+                        };
+                      }
+                      const cell = cellRects().get(t.id);
+                      if (!cell) return null;
+                      const scale = Math.min(cell.w / nat.w, cell.h / nat.h);
+                      // Center the scaled terminal inside the cell (object-fit:contain).
+                      const offsetX = (cell.w - nat.w * scale) / 2;
+                      const offsetY = (cell.h - nat.h * scale) / 2;
+                      return {
+                        cellX: cell.x + offsetX,
+                        cellY: cell.y + offsetY,
+                        naturalW: nat.w,
+                        naturalH: nat.h,
+                        scale,
+                      };
+                    };
+                    return (
+                      <TerminalView
+                        tab={t}
+                        active={t.id === activeTabId()}
+                        gridLayout={gridLayout()}
+                      />
+                    );
+                  }}
                 </For>
               </Show>
             </div>
@@ -462,6 +544,20 @@ export default function App() {
       </Show>
       <Show when={showLogs()}>
         <LogViewer onClose={() => setShowLogs(false)} />
+      </Show>
+      <Show when={isExposeOpen() && tabs().length > 0}>
+        <ExposeView
+          natural={mainPaneSize()}
+          onCellRects={setCellRects}
+          onActivate={(id) => {
+            setActiveTab(id);
+            // startZoom() has already been called by ExposeView; the terminal
+            // is animating to full-pane rect. Wait for the CSS transition
+            // (matches `transition: 0.22s` in Terminal.tsx's grid-mode style)
+            // then dismiss the overlay.
+            setTimeout(() => closeExpose(), 230);
+          }}
+        />
       </Show>
     </div>
   );

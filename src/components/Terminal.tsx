@@ -24,6 +24,17 @@ import { connectTab, reconnectTabFromProfile, restoreCwd } from "../stores/tabs"
 interface Props {
   tab: Tab;
   active: boolean;
+  /** When set, the terminal renders at `naturalW x naturalH` CSS pixels and
+   *  is visually shrunk via `transform: scale(scale)`. Used by Mission
+   *  Control (Exposé) grid so the PTY/xterm never sees a resize. Positioned
+   *  at `(cellX, cellY)` in viewport coordinates (page-fixed). */
+  gridLayout?: {
+    cellX: number;
+    cellY: number;
+    naturalW: number;
+    naturalH: number;
+    scale: number;
+  } | null;
 }
 
 interface MatchInfo {
@@ -477,6 +488,18 @@ export function TerminalView(props: Props) {
     queueMicrotask(() => fit?.fit());
   });
 
+  // When entering grid mode (Exposé), force a redraw of every terminal —
+  // xterm-webgl skips draws while the element is hidden, so non-active tabs
+  // would otherwise show a blank canvas. Refresh after a frame so the
+  // wrapper's new visibility/position has settled.
+  createEffect(() => {
+    if (props.gridLayout && term) {
+      requestAnimationFrame(() => {
+        try { term?.refresh(0, term.rows - 1); } catch {}
+      });
+    }
+  });
+
   // When search opens for this tab, focus the input
   createEffect(() => {
     if (isSearchOpenFor(props.tab.id)) {
@@ -486,20 +509,51 @@ export function TerminalView(props: Props) {
 
   onCleanup(() => term?.dispose());
 
+  // Outer wrapper style switches between "stacked" (default — absolute,
+  // visibility-toggled) and "grid" (fixed natural size, CSS-scaled). In
+  // grid mode every terminal is visible at full pre-scale dimensions so
+  // xterm-webgl keeps painting it; the scale is purely visual.
+  const wrapperStyle = () => {
+    const g = props.gridLayout;
+    if (g) {
+      // Border radius scales with the transform, so use a larger raw value
+      // (in pre-scale pixels) to get ~10px visual rounding at typical scales.
+      const radius = Math.round(10 / Math.max(g.scale, 0.0001));
+      return {
+        position: "fixed" as const,
+        top: `${g.cellY}px`,
+        left: `${g.cellX}px`,
+        width: `${g.naturalW}px`,
+        height: `${g.naturalH}px`,
+        transform: `scale(${g.scale})`,
+        "transform-origin": "top left",
+        "pointer-events": "none" as const,
+        // Above the backdrop, below the cell-click capture layer.
+        "z-index": "110",
+        // Rounded corners that match the cell frame (radius scaled to stay
+        // visually constant after the scale transform).
+        "border-radius": `${radius}px`,
+        overflow: "hidden",
+        // Smooth click-to-zoom: animates when gridLayout changes to a
+        // full-pane rect (scale 1) before the overlay closes.
+        transition: "top 0.22s ease, left 0.22s ease, transform 0.22s ease",
+      };
+    }
+    return {
+      position: "absolute" as const,
+      inset: "0",
+      visibility: (props.active ? "visible" : "hidden") as "visible" | "hidden",
+      "pointer-events": (props.active ? "auto" : "none") as "auto" | "none",
+    };
+  };
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: "0",
-        visibility: props.active ? "visible" : "hidden",
-        "pointer-events": props.active ? "auto" : "none",
-      }}
-    >
+    <div style={wrapperStyle()}>
       <div
         ref={host}
         style={{ position: "absolute", inset: "0", padding: "4px" }}
         onclick={() => {
-          if (props.active && !isSearchOpenFor(props.tab.id)) {
+          if (props.active && !props.gridLayout && !isSearchOpenFor(props.tab.id)) {
             term?.focus();
             bumpFit(props.tab.id);
           }
