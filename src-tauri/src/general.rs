@@ -26,6 +26,10 @@ pub struct GeneralSettings {
     /// default (powershell.exe on Windows, $SHELL or /bin/bash elsewhere).
     #[serde(default)]
     pub default_shell: Option<String>,
+    /// Preferred monospace font family for terminals. Prepended to the built-in
+    /// fallback stack. None falls back to the bundled defaults.
+    #[serde(default)]
+    pub font_family: Option<String>,
     /// Whether the left tab bar reserves layout space or floats over the app.
     #[serde(default = "default_side_tab_bar_mode")]
     pub side_tab_bar_mode: SideTabBarMode,
@@ -58,6 +62,7 @@ impl Default for GeneralSettings {
             side_font_size: default_side_font_size(),
             git_poll_secs: default_git_poll_secs(),
             default_shell: None,
+            font_family: None,
             side_tab_bar_mode: default_side_tab_bar_mode(),
             side_tab_bar_auto_hide: default_side_tab_bar_auto_hide(),
             side_tab_bar_width: default_side_tab_bar_width(),

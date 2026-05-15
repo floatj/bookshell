@@ -125,6 +125,23 @@ function GeneralPane() {
         <span style={{ "font-size": "12px", opacity: 0.7 }}>px</span>
       </div>
 
+      <label>Font family</label>
+      <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <input
+          type="text"
+          placeholder='e.g. Monaco, "MesloLGS NF"'
+          value={general().font_family ?? ""}
+          onChange={(e) => {
+            const v = e.currentTarget.value.trim();
+            updateGeneral({ font_family: v.length > 0 ? v : null });
+          }}
+          style={{ ...input, "min-width": "260px", flex: 1, "font-family": "monospace" }}
+        />
+        <span style={{ "font-size": "12px", opacity: 0.7, "flex-basis": "100%" }}>
+          Must be a monospace font installed on this machine; falls back to JetBrains Mono / Cascadia Code / Consolas when blank.
+        </span>
+      </div>
+
       <label>Side terminal font</label>
       <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
         <input
@@ -254,7 +271,7 @@ function GeneralPane() {
       </div>
 
       <div style={{ "grid-column": "1 / -1", "margin-top": "16px", opacity: 0.6, "font-size": "12px" }}>
-        Theme picker, font family, configurable hotkeys and tab session restore will land here later.
+        Theme picker, configurable hotkeys and tab session restore will land here later.
       </div>
     </div>
   );

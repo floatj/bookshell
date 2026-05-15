@@ -237,6 +237,9 @@ export interface GeneralSettings {
    *  connection has no shell of its own. null/empty → platform default
    *  (powershell.exe on Windows, $SHELL or /bin/bash elsewhere). */
   default_shell?: string | null;
+  /** Preferred monospace font family for terminals. Prepended to the built-in
+   *  fallback stack. null/empty → bundled defaults only. */
+  font_family?: string | null;
   side_tab_bar_mode: "split" | "hover";
   side_tab_bar_auto_hide: boolean;
   side_tab_bar_width: number;

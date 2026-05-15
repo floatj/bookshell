@@ -19,7 +19,7 @@ import {
   type Tab,
 } from "../stores/tabs";
 import { closeSearch, isSearchOpenFor } from "../stores/search";
-import { general } from "../stores/general";
+import { general, terminalFontFamily } from "../stores/general";
 import { connections, isLinux } from "../stores/connections";
 import { connectTab, reconnectTabFromProfile, restoreCwd } from "../stores/tabs";
 
@@ -182,7 +182,7 @@ export function TerminalView(props: Props) {
   onMount(() => {
     term = new Terminal({
       cursorBlink: true,
-      fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
+      fontFamily: terminalFontFamily(),
       fontSize: props.tab.fontSize ?? general().font_size,
       scrollback: general().scrollback,
       allowProposedApi: true,
@@ -582,6 +582,7 @@ export function TerminalView(props: Props) {
     if (!term) return;
     term.options.scrollback = general().scrollback;
     term.options.fontSize = props.tab.fontSize ?? general().font_size;
+    term.options.fontFamily = terminalFontFamily();
     term.options.theme = themeForCurrent();
     queueMicrotask(() => fit?.fit());
   });

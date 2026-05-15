@@ -5,7 +5,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { api } from "../ipc/api";
-import { general } from "../stores/general";
+import { general, terminalFontFamily } from "../stores/general";
 import {
   closeSideTerm,
   isSideTermOpen,
@@ -183,7 +183,7 @@ function SideTerminalView(props: { sessionId: string; parentTabId: string }) {
   onMount(async () => {
     term = new Terminal({
       cursorBlink: true,
-      fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
+      fontFamily: terminalFontFamily(),
       fontSize: general().side_font_size,
       scrollback: general().scrollback,
       allowProposedApi: true,
@@ -279,6 +279,7 @@ function SideTerminalView(props: { sessionId: string; parentTabId: string }) {
       if (!term) return;
       term.options.scrollback = general().scrollback;
       term.options.fontSize = general().side_font_size;
+      term.options.fontFamily = terminalFontFamily();
       queueMicrotask(() => fit?.fit());
     });
 
