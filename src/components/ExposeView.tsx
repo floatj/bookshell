@@ -1,4 +1,5 @@
-import { createEffect, createSignal, For, onCleanup, onMount } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import { C } from "../theme";
 import {
   activeTabId,
@@ -7,6 +8,7 @@ import {
   type TabStatus,
 } from "../stores/tabs";
 import { closeExpose, startZoom, zoomingTabId } from "../stores/expose";
+import { tabBgFor, tabFgFor } from "./TabBar";
 
 interface CellRect {
   x: number;
@@ -46,14 +48,21 @@ const statusGlyph: Record<TabStatus, string> = {
 export function ExposeView(props: Props) {
   let gridRef: HTMLDivElement | undefined;
   const cellRefs = new Map<string, HTMLDivElement>();
+  // Local copy of cell rects so the label overlay (rendered through a Portal
+  // at root, above the live terminal preview at z-index 110) can position
+  // itself against each cell. Labels can't live inside the cell because the
+  // cell's z-index 120 is local to the backdrop's stacking context (z=100),
+  // which would render the label under the terminal wrapper.
+  const [rects, setRects] = createSignal<Map<string, CellRect>>(new Map());
 
   function recomputeRects() {
-    const rects = new Map<string, CellRect>();
+    const next = new Map<string, CellRect>();
     for (const [id, el] of cellRefs) {
       const r = el.getBoundingClientRect();
-      rects.set(id, { x: r.left, y: r.top, w: r.width, h: r.height });
+      next.set(id, { x: r.left, y: r.top, w: r.width, h: r.height });
     }
-    props.onCellRects(rects);
+    setRects(next);
+    props.onCellRects(next);
   }
 
   // Recompute on mount, on resize, and when tabs change. rAF (not
@@ -157,29 +166,71 @@ export function ExposeView(props: Props) {
                     isActive() ? C.accent : C.border;
                 }}
                 onClick={() => activate(t.id)}
-              >
-                {/* Label bar overlaid on top of the (rendered-behind) terminal */}
-                <div style={labelBarStyle}>
-                  <span style={{ color: statusColor[t.status], "font-size": "10px" }}>
-                    {statusGlyph[t.status]}
-                  </span>
-                  {t.icon && <span>{t.icon}</span>}
-                  <span style={{
-                    color: t.color ?? C.text,
-                    "font-weight": 600,
-                    "white-space": "nowrap",
-                    overflow: "hidden",
-                    "text-overflow": "ellipsis",
-                    "flex-grow": 1,
-                  }}>
-                    {t.name}
-                  </span>
-                </div>
-              </div>
+              />
             );
           }}
         </For>
       </div>
+
+      {/* Bottom labels rendered through a Portal so they paint above the live
+          terminal preview (which is at fixed z-index 110, escaping ExposeView's
+          z=100 stacking context). Each label tracks its cell's rect. */}
+      <Portal>
+        <For each={tabs()}>
+          {(t: Tab) => {
+            const r = () => rects().get(t.id);
+            return (
+              <Show when={r()}>
+                {(rect) => {
+                  const active = () => t.id === activeTabId();
+                  return (
+                    <div
+                      style={{
+                        position: "fixed",
+                        left: `${rect().x + 10}px`,
+                        width: `${Math.max(0, rect().w - 20)}px`,
+                        top: `${rect().y + rect().h - 40}px`,
+                        display: "flex",
+                        "align-items": "center",
+                        gap: "6px",
+                        padding: "7px 12px",
+                        // Mirror the left tab bar exactly: solid tint of the
+                        // tab's color (or bgActive / transparent when no
+                        // colour) so a quick glance reads the same on both
+                        // surfaces.
+                        background: tabBgFor(t.color, active(), false),
+                        border: `1px solid ${C.border}`,
+                        "border-radius": "8px",
+                        "box-shadow": "0 4px 14px rgba(0,0,0,0.45)",
+                        color: tabFgFor(t.color, active()),
+                        "font-size": "13px",
+                        "font-weight": t.color && active() ? 600 : 400,
+                        "z-index": 200,
+                        "pointer-events": "none",
+                        opacity: zoomingTabId() && zoomingTabId() !== t.id ? 0 : 1,
+                        transition: "opacity 0.22s ease, top 0.22s ease, left 0.22s ease, width 0.22s ease",
+                      }}
+                    >
+                      <span style={{ color: statusColor[t.status], "font-size": "10px" }}>
+                        {statusGlyph[t.status]}
+                      </span>
+                      {t.icon && <span>{t.icon}</span>}
+                      <span style={{
+                        "white-space": "nowrap",
+                        overflow: "hidden",
+                        "text-overflow": "ellipsis",
+                        "flex-grow": 1,
+                      }}>
+                        {t.name}
+                      </span>
+                    </div>
+                  );
+                }}
+              </Show>
+            );
+          }}
+        </For>
+      </Portal>
     </div>
   );
 }
@@ -203,18 +254,3 @@ const gridStyle = {
   "align-content": "start",
 } as const;
 
-const labelBarStyle = {
-  position: "absolute",
-  top: "0",
-  left: "0",
-  right: "0",
-  display: "flex",
-  "align-items": "center",
-  gap: "6px",
-  padding: "6px 10px",
-  background: "linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0))",
-  color: C.text,
-  "font-size": "12px",
-  "z-index": "1",
-  "pointer-events": "none" as const,
-} as const;

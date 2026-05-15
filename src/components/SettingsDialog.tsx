@@ -161,6 +161,14 @@ function GeneralPane() {
           />
           <span>Auto hide</span>
         </label>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().side_tab_bar_preview}
+            onChange={(e) => updateGeneral({ side_tab_bar_preview: e.currentTarget.checked })}
+          />
+          <span>Hover preview</span>
+        </label>
       </div>
 
       <label>Tab bar width</label>

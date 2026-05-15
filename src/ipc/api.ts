@@ -240,6 +240,7 @@ export interface GeneralSettings {
   side_tab_bar_mode: "split" | "hover";
   side_tab_bar_auto_hide: boolean;
   side_tab_bar_width: number;
+  side_tab_bar_preview: boolean;
 }
 
 export interface CommandButton {

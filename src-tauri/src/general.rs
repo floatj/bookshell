@@ -35,6 +35,10 @@ pub struct GeneralSettings {
     /// Width of the left tab bar in CSS pixels.
     #[serde(default = "default_side_tab_bar_width")]
     pub side_tab_bar_width: u32,
+    /// Show a hover preview popover with a thumbnail of the tab's terminal
+    /// viewport when the pointer lingers over a tab in the side bar.
+    #[serde(default = "default_side_tab_bar_preview")]
+    pub side_tab_bar_preview: bool,
 }
 
 impl Default for GeneralSettings {
@@ -48,6 +52,7 @@ impl Default for GeneralSettings {
             side_tab_bar_mode: default_side_tab_bar_mode(),
             side_tab_bar_auto_hide: default_side_tab_bar_auto_hide(),
             side_tab_bar_width: default_side_tab_bar_width(),
+            side_tab_bar_preview: default_side_tab_bar_preview(),
         }
     }
 }
@@ -72,6 +77,9 @@ fn default_side_tab_bar_auto_hide() -> bool {
 }
 fn default_side_tab_bar_width() -> u32 {
     190
+}
+fn default_side_tab_bar_preview() -> bool {
+    true
 }
 
 pub fn general_path() -> PathBuf {

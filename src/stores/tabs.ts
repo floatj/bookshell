@@ -64,6 +64,7 @@ const sessionUnlisteners = new Map<string, UnlistenFn[]>();
 const dataListeners = new Map<string, (bytes: Uint8Array) => void>();
 const closeListeners = new Map<string, (reason: string) => void>();
 const bufferDumpers = new Map<string, () => string>();
+const previewGetters = new Map<string, () => string | null>();
 
 export function onTabData(tabId: string, cb: (bytes: Uint8Array) => void) {
   dataListeners.set(tabId, cb);
@@ -78,6 +79,16 @@ export function onTabBufferDump(tabId: string, dumper: () => string) {
 }
 export function dumpTabBuffer(tabId: string): string | null {
   return bufferDumpers.get(tabId)?.() ?? null;
+}
+
+/** Terminal.tsx registers a function returning just the current viewport
+ *  (visible rows) of the tab's xterm buffer — used by the side bar's hover
+ *  preview popover. Returns null when the tab has no live xterm yet. */
+export function onTabPreview(tabId: string, getter: () => string | null) {
+  previewGetters.set(tabId, getter);
+}
+export function getTabPreview(tabId: string): string | null {
+  return previewGetters.get(tabId)?.() ?? null;
 }
 
 let nextTabSeq = 1;
@@ -306,6 +317,7 @@ export async function closeTab(id: string) {
   dataListeners.delete(id);
   closeListeners.delete(id);
   bufferDumpers.delete(id);
+  previewGetters.delete(id);
 
   setState("tabs", (prev) => prev.filter((x) => x.id !== id));
   if (state.activeTabId === id) {

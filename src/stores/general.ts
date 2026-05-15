@@ -10,6 +10,7 @@ const defaults: GeneralSettings = {
   side_tab_bar_mode: "split",
   side_tab_bar_auto_hide: false,
   side_tab_bar_width: 190,
+  side_tab_bar_preview: true,
 };
 
 const [general, setGeneral] = createSignal<GeneralSettings>(defaults);

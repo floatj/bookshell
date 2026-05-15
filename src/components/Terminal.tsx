@@ -14,6 +14,7 @@ import {
   onTabBufferDump,
   onTabClose,
   onTabData,
+  onTabPreview,
   type Tab,
 } from "../stores/tabs";
 import { closeSearch, isSearchOpenFor } from "../stores/search";
@@ -376,6 +377,23 @@ export function TerminalView(props: Props) {
         }
       }
       return out.join("\n");
+    });
+
+    // Snapshot just the current viewport (visible rows) as plain text.
+    // Drives the side bar's hover preview popover; cheap enough to recompute
+    // each time the popover opens.
+    onTabPreview(props.tab.id, () => {
+      if (!term) return null;
+      const buf = term.buffer.active;
+      const start = buf.viewportY;
+      const rows = term.rows;
+      const lines: string[] = [];
+      for (let y = start; y < start + rows; y++) {
+        const line = buf.getLine(y);
+        lines.push(line ? line.translateToString(true) : "");
+      }
+      while (lines.length && lines[lines.length - 1] === "") lines.pop();
+      return lines.length ? lines.join("\n") : null;
     });
 
     // Auto-copy on selection: fires when the drag ends inside the terminal.

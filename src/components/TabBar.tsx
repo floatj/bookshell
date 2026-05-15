@@ -1,12 +1,15 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 
 const MIN_W = 140;
 const MAX_W = 400;
+const PREVIEW_DELAY_MS = 450;
 import { C } from "../theme";
 import {
   activeTabId,
   closeTab,
   dumpTabBuffer,
+  getTabPreview,
   openMarkCwd,
   renameTab,
   reorderTabs,
@@ -21,15 +24,29 @@ import {
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { ColorPickerDialog } from "./ColorPickerDialog";
 import { api } from "../ipc/api";
+import { general } from "../stores/general";
 
 /** Convert a hex color to rgba with the given alpha. Falls back to transparent
  *  if parsing fails so a bad value never breaks the tab render. */
-function hexToRgba(hex: string | null | undefined, alpha: number): string {
+export function hexToRgba(hex: string | null | undefined, alpha: number): string {
   if (!hex) return "transparent";
   const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
   if (!m) return hex;
   const n = parseInt(m[1], 16);
   return `rgba(${(n >> 16) & 0xff},${(n >> 8) & 0xff},${n & 0xff},${alpha})`;
+}
+
+/** Solid tint applied to a tab row (left bar) or label (Exposé). Mirrors the
+ *  side bar's active/hover alpha curve so both surfaces stay consistent. */
+export function tabBgFor(color: string | null | undefined, active: boolean, hovered: boolean): string {
+  if (!color) return active ? C.bgActive : hovered ? C.bgHover : "transparent";
+  return hexToRgba(color, active ? (hovered ? 0.38 : 0.32) : hovered ? 0.25 : 0.18);
+}
+
+/** Foreground colour for a tab's name label — matches tabBgFor's pairing. */
+export function tabFgFor(color: string | null | undefined, active: boolean): string {
+  if (!color) return C.text;
+  return active ? color : hexToRgba(color, 0.85);
 }
 
 interface Props {
@@ -108,6 +125,37 @@ export function TabBar(props: Props) {
   /** Tab id under cursor (or "__end__"). Null when not over any drop target. */
   const [dropTargetId, setDropTargetId] = createSignal<string | null>(null);
   const isHoverMode = () => props.mode === "hover";
+
+  /** Hover preview popover. Anchored to the right edge of the hovered tab's
+   *  row; content is the tab's xterm viewport text, refreshed each open. */
+  interface PreviewState { tabId: string; anchorTop: number; anchorRight: number; }
+  const [preview, setPreview] = createSignal<PreviewState | null>(null);
+  let previewTimer: number | undefined;
+  function clearPreviewTimer() {
+    if (previewTimer !== undefined) {
+      clearTimeout(previewTimer);
+      previewTimer = undefined;
+    }
+  }
+  function schedulePreview(tabId: string, rowEl: HTMLElement) {
+    clearPreviewTimer();
+    if (!general().side_tab_bar_preview) return;
+    previewTimer = window.setTimeout(() => {
+      const r = rowEl.getBoundingClientRect();
+      setPreview({ tabId, anchorTop: r.top, anchorRight: r.right });
+    }, PREVIEW_DELAY_MS);
+  }
+  function dismissPreview(tabId: string) {
+    clearPreviewTimer();
+    setPreview((p) => (p && p.tabId === tabId ? null : p));
+  }
+  onCleanup(clearPreviewTimer);
+  createEffect(() => {
+    if (!general().side_tab_bar_preview) {
+      clearPreviewTimer();
+      setPreview(null);
+    }
+  });
 
   createEffect(() => {
     setTabBarWidth(clampWidth(props.width));
@@ -275,12 +323,18 @@ export function TabBar(props: Props) {
         {(t) => (
           <div
             data-tab-slot={t.id}
-            onMouseDown={(e) => startDrag(e, t.id)}
-            onClick={() => setActiveTab(t.id)}
+            onMouseDown={(e) => { dismissPreview(t.id); startDrag(e, t.id); }}
+            onClick={() => { dismissPreview(t.id); setActiveTab(t.id); }}
             onDblClick={() => setRenamingId(t.id)}
             onContextMenu={(e) => openMenu(e, t)}
-            onMouseEnter={() => setHoveredTabId(t.id)}
-            onMouseLeave={() => setHoveredTabId((id) => id === t.id ? null : id)}
+            onMouseEnter={(e) => {
+              setHoveredTabId(t.id);
+              schedulePreview(t.id, e.currentTarget);
+            }}
+            onMouseLeave={() => {
+              setHoveredTabId((id) => id === t.id ? null : id);
+              dismissPreview(t.id);
+            }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
@@ -403,6 +457,17 @@ export function TabBar(props: Props) {
           );
         }}
       </Show>
+
+      <Show when={preview()}>
+        {(p) => {
+          const tab = () => tabs().find((x) => x.id === p().tabId) ?? null;
+          return (
+            <Show when={tab()}>
+              {(t) => <TabPreviewPopover tab={t()} anchorTop={p().anchorTop} anchorRight={p().anchorRight} />}
+            </Show>
+          );
+        }}
+      </Show>
     </div>
     {/* right-edge drag handle */}
     <div
@@ -461,10 +526,7 @@ const tabStyle = {
  *  color across the whole tab. Active tabs get a slightly stronger alpha so
  *  they still stand out against their inactive siblings. */
 function tabColorStyle(color: string | null | undefined, active: boolean, hovered: boolean) {
-  if (!color) {
-    return { background: active ? C.bgActive : hovered ? C.bgHover : "transparent" };
-  }
-  return { background: hexToRgba(color, active ? (hovered ? 0.38 : 0.32) : hovered ? 0.25 : 0.18) };
+  return { background: tabBgFor(color, active, hovered) };
 }
 
 const tabTopRowStyle = {
@@ -518,6 +580,110 @@ const newBtnStyle = {
   "margin-top": "4px",
   transition: "color 0.1s, border-color 0.1s",
 } as const;
+
+interface TabPreviewProps {
+  tab: Tab;
+  anchorTop: number;
+  anchorRight: number;
+}
+
+/** Floating preview of a tab's current terminal viewport. Pulls text via
+ *  getTabPreview() (registered by Terminal.tsx) and re-samples every 600ms so
+ *  the user sees live output if the tab is actively printing. */
+function TabPreviewPopover(props: TabPreviewProps) {
+  const PREVIEW_W = 460;
+  const PREVIEW_H = 280;
+  const GAP = 10;
+
+  const [text, setText] = createSignal<string | null>(getTabPreview(props.tab.id));
+  const iv = window.setInterval(() => setText(getTabPreview(props.tab.id)), 600);
+  onCleanup(() => clearInterval(iv));
+
+  // Clamp the popover inside the viewport. Prefer placement to the right of
+  // the tab; fall back to overlapping when there isn't room (small windows).
+  const layout = () => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = props.anchorRight + GAP;
+    if (left + PREVIEW_W > vw - 8) left = Math.max(8, vw - PREVIEW_W - 8);
+    let top = props.anchorTop;
+    if (top + PREVIEW_H > vh - 8) top = Math.max(8, vh - PREVIEW_H - 8);
+    return { left, top };
+  };
+
+  const profile = () => props.tab;
+
+  return (
+    <Portal>
+      <div
+        style={{
+          position: "fixed",
+          top: `${layout().top}px`,
+          left: `${layout().left}px`,
+          width: `${PREVIEW_W}px`,
+          height: `${PREVIEW_H}px`,
+          background: "rgba(18,18,20,0.96)",
+          "backdrop-filter": "blur(24px) saturate(160%)",
+          "-webkit-backdrop-filter": "blur(24px) saturate(160%)",
+          border: `1px solid ${C.border}`,
+          "border-radius": "10px",
+          "box-shadow": "0 16px 40px rgba(0,0,0,0.55)",
+          "z-index": 50,
+          "pointer-events": "none",
+          display: "flex",
+          "flex-direction": "column",
+          overflow: "hidden",
+          color: C.text,
+        }}
+      >
+        <div style={{
+          display: "flex",
+          "align-items": "center",
+          gap: "6px",
+          padding: "6px 10px",
+          "border-bottom": `1px solid ${C.borderSub}`,
+          background: "rgba(255,255,255,0.03)",
+          "font-size": "11px",
+          color: C.text2,
+        }}>
+          <span style={{ color: statusColor[profile().status], "font-size": "10px" }}>
+            {statusGlyph[profile().status]}
+          </span>
+          {profile().icon && <span>{profile().icon}</span>}
+          <span style={{
+            "font-weight": 600,
+            color: profile().color ?? C.text,
+            overflow: "hidden",
+            "text-overflow": "ellipsis",
+            "white-space": "nowrap",
+          }}>{profile().name}</span>
+        </div>
+        <div style={{
+          flex: 1,
+          padding: "8px 10px",
+          "font-family": '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
+          "font-size": "10px",
+          "line-height": "1.25",
+          "white-space": "pre",
+          overflow: "hidden",
+          color: C.text,
+        }}>
+          <Show when={text()} fallback={
+            <div style={{ color: C.text3, "font-family": "inherit", opacity: 0.8 }}>
+              {profile().status === "connected"
+                ? "(empty)"
+                : profile().status === "connecting"
+                  ? "Connecting…"
+                  : "Not connected"}
+            </div>
+          }>
+            {text()}
+          </Show>
+        </div>
+      </div>
+    </Portal>
+  );
+}
 
 interface PaletteProps {
   current: string | null;
