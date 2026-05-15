@@ -52,6 +52,10 @@ pub struct GeneralSettings {
     /// Clamped to [0.3, 1.0]; 1.0 is fully opaque (acrylic effect invisible).
     #[serde(default = "default_acrylic_opacity")]
     pub acrylic_opacity: f32,
+    /// Hide the bottom command bar until the pointer enters the bottom trigger
+    /// strip; lets terminals reclaim the row when not in use.
+    #[serde(default = "default_command_bar_auto_hide")]
+    pub command_bar_auto_hide: bool,
 }
 
 impl Default for GeneralSettings {
@@ -69,6 +73,7 @@ impl Default for GeneralSettings {
             side_tab_bar_preview: default_side_tab_bar_preview(),
             acrylic_enabled: default_acrylic_enabled(),
             acrylic_opacity: default_acrylic_opacity(),
+            command_bar_auto_hide: default_command_bar_auto_hide(),
         }
     }
 }
@@ -102,6 +107,9 @@ fn default_acrylic_enabled() -> bool {
 }
 fn default_acrylic_opacity() -> f32 {
     0.75
+}
+fn default_command_bar_auto_hide() -> bool {
+    false
 }
 
 pub fn general_path() -> PathBuf {

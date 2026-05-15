@@ -250,6 +250,9 @@ export interface GeneralSettings {
   acrylic_enabled: boolean;
   /** Alpha multiplier for app surfaces when acrylic_enabled. 0.3..1.0. */
   acrylic_opacity: number;
+  /** Collapse the bottom command bar until the pointer hovers the trigger
+   *  strip along the bottom of the terminal area. */
+  command_bar_auto_hide: boolean;
 }
 
 export interface CommandButton {

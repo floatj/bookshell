@@ -1,6 +1,7 @@
 import { createSignal, For, Show } from "solid-js";
 import { api, type CommandButton } from "../ipc/api";
 import { buttons, loadButtons } from "../stores/buttons";
+import { general } from "../stores/general";
 import { activeTab, bumpFit } from "../stores/tabs";
 import { C, overlayStyle, dialogStyle, btnPrimary, btnSecondary, btnDanger } from "../theme";
 
@@ -10,8 +11,25 @@ interface Props {
 
 export function CommandBar(props: Props) {
   const [pendingConfirm, setPendingConfirm] = createSignal<CommandButton | null>(null);
+  const [hovered, setHovered] = createSignal(false);
+  let hideTimer: number | undefined;
 
   loadButtons();
+
+  const autoHide = () => general().command_bar_auto_hide;
+  const expanded = () => !autoHide() || hovered();
+
+  function showBar() {
+    if (hideTimer !== undefined) {
+      clearTimeout(hideTimer);
+      hideTimer = undefined;
+    }
+    setHovered(true);
+  }
+  function scheduleHide() {
+    if (hideTimer !== undefined) clearTimeout(hideTimer);
+    hideTimer = window.setTimeout(() => setHovered(false), 180);
+  }
 
   async function send(b: CommandButton) {
     const t = activeTab();
@@ -34,6 +52,7 @@ export function CommandBar(props: Props) {
     // Return focus to the terminal so the user can keep typing without an
     // extra click. fitTick effect in Terminal.tsx handles the actual focus.
     bumpFit(t.id);
+    if (autoHide()) setHovered(false);
   }
 
   function handleClick(b: CommandButton) {
@@ -45,7 +64,37 @@ export function CommandBar(props: Props) {
   }
 
   return (
-    <div style={barStyle}>
+    <div
+      style={{
+        position: "relative",
+        "flex-shrink": "0",
+        height: autoHide() ? "6px" : "auto",
+      }}
+      onMouseEnter={showBar}
+      onMouseLeave={scheduleHide}
+    >
+      <Show when={!expanded()}>
+        <div style={triggerStripStyle} title="Show command bar" />
+      </Show>
+      <div
+        style={{
+          ...barStyle,
+          ...(autoHide()
+            ? {
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                "z-index": 8,
+                transform: expanded() ? "translateY(0)" : "translateY(100%)",
+                opacity: expanded() ? 1 : 0,
+                "pointer-events": expanded() ? "auto" : "none",
+                transition: "transform 0.18s ease, opacity 0.18s ease",
+                "box-shadow": expanded() ? "0 -6px 18px rgba(0,0,0,0.35)" : "none",
+              }
+            : {}),
+        }}
+      >
       <For each={buttons()}>
         {(b) => (
           <button
@@ -65,6 +114,7 @@ export function CommandBar(props: Props) {
       <button onClick={props.onEdit} style={editBtnStyle} title="Edit buttons">
         ⚙
       </button>
+      </div>
 
       <Show when={pendingConfirm()}>
         {(b) => (
@@ -140,6 +190,17 @@ const editBtnStyle = {
   cursor: "pointer",
   "font-size": "12px",
   "margin-left": "auto",
+} as const;
+
+const triggerStripStyle = {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  bottom: 0,
+  height: "6px",
+  background: C.accent,
+  opacity: 0.18,
+  "z-index": 7,
 } as const;
 
 const confirmOverlayStyle = overlayStyle;

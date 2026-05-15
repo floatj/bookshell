@@ -270,6 +270,21 @@ function GeneralPane() {
         </span>
       </div>
 
+      <label>Command bar</label>
+      <div style={{ display: "flex", gap: "10px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().command_bar_auto_hide}
+            onChange={(e) => updateGeneral({ command_bar_auto_hide: e.currentTarget.checked })}
+          />
+          <span>Auto hide</span>
+        </label>
+        <span style={{ "font-size": "12px", opacity: 0.7, "flex-basis": "100%" }}>
+          Collapse the bottom button row until you hover the trigger strip along the bottom edge.
+        </span>
+      </div>
+
       <div style={{ "grid-column": "1 / -1", "margin-top": "16px", opacity: 0.6, "font-size": "12px" }}>
         Theme picker, configurable hotkeys and tab session restore will land here later.
       </div>
