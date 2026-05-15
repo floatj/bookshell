@@ -64,7 +64,16 @@ const sessionUnlisteners = new Map<string, UnlistenFn[]>();
 const dataListeners = new Map<string, (bytes: Uint8Array) => void>();
 const closeListeners = new Map<string, (reason: string) => void>();
 const bufferDumpers = new Map<string, () => string>();
-const previewGetters = new Map<string, () => string | null>();
+
+/** One styled segment of text within a preview line. fg/bg are CSS colors;
+ *  undefined means "use default" (theme foreground / transparent background). */
+export interface PreviewRun {
+  text: string;
+  fg?: string;
+  bg?: string;
+  bold?: boolean;
+}
+const previewGetters = new Map<string, () => PreviewRun[][] | null>();
 
 export function onTabData(tabId: string, cb: (bytes: Uint8Array) => void) {
   dataListeners.set(tabId, cb);
@@ -81,13 +90,14 @@ export function dumpTabBuffer(tabId: string): string | null {
   return bufferDumpers.get(tabId)?.() ?? null;
 }
 
-/** Terminal.tsx registers a function returning just the current viewport
- *  (visible rows) of the tab's xterm buffer — used by the side bar's hover
- *  preview popover. Returns null when the tab has no live xterm yet. */
-export function onTabPreview(tabId: string, getter: () => string | null) {
+/** Terminal.tsx registers a function returning the current viewport (visible
+ *  rows) of the tab's xterm buffer as an array of styled lines — used by the
+ *  side bar's hover preview popover. Each line is an array of contiguous
+ *  same-attribute runs. Returns null when the tab has no live xterm yet. */
+export function onTabPreview(tabId: string, getter: () => PreviewRun[][] | null) {
   previewGetters.set(tabId, getter);
 }
-export function getTabPreview(tabId: string): string | null {
+export function getTabPreview(tabId: string): PreviewRun[][] | null {
   return previewGetters.get(tabId)?.() ?? null;
 }
 

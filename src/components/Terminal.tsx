@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { createStore } from "solid-js/store";
-import { C, xtermTheme } from "../theme";
+import { ansiPaletteColor, C, xtermTheme } from "../theme";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { FitAddon } from "@xterm/addon-fit";
@@ -15,6 +15,7 @@ import {
   onTabClose,
   onTabData,
   onTabPreview,
+  type PreviewRun,
   type Tab,
 } from "../stores/tabs";
 import { closeSearch, isSearchOpenFor } from "../stores/search";
@@ -379,21 +380,76 @@ export function TerminalView(props: Props) {
       return out.join("\n");
     });
 
-    // Snapshot just the current viewport (visible rows) as plain text.
-    // Drives the side bar's hover preview popover; cheap enough to recompute
-    // each time the popover opens.
+    // Snapshot the current viewport as styled runs so the side bar's hover
+    // preview popover can paint colors / bold the same way the live terminal
+    // does. Coalesces adjacent cells with identical attributes into a single
+    // run to keep the DOM cost roughly O(color-changes) rather than O(cells).
     onTabPreview(props.tab.id, () => {
       if (!term) return null;
       const buf = term.buffer.active;
       const start = buf.viewportY;
       const rows = term.rows;
-      const lines: string[] = [];
+      const lines: PreviewRun[][] = [];
+
+      const cssFor = (
+        isDefault: boolean,
+        isRGB: boolean,
+        value: number,
+      ): string | undefined => {
+        if (isDefault) return undefined;
+        if (isRGB) {
+          const r = (value >> 16) & 0xff;
+          const g = (value >> 8) & 0xff;
+          const b = value & 0xff;
+          return `rgb(${r},${g},${b})`;
+        }
+        return ansiPaletteColor(value);
+      };
+
       for (let y = start; y < start + rows; y++) {
         const line = buf.getLine(y);
-        lines.push(line ? line.translateToString(true) : "");
+        if (!line) { lines.push([]); continue; }
+        const runs: PreviewRun[] = [];
+        let pending: PreviewRun | null = null;
+        for (let x = 0; x < line.length; x++) {
+          const cell = line.getCell(x);
+          if (!cell) continue;
+          const chars = cell.getChars() || (cell.getWidth() === 0 ? "" : " ");
+          if (!chars) continue;
+          let fg = cssFor(cell.isFgDefault(), cell.isFgRGB(), cell.getFgColor());
+          let bg = cssFor(cell.isBgDefault(), cell.isBgRGB(), cell.getBgColor());
+          const bold = !!cell.isBold();
+          // Inverse swaps fg/bg, with defaults filled in from the theme.
+          if (cell.isInverse()) {
+            const f = fg ?? xtermTheme.foreground;
+            const b = bg ?? xtermTheme.background;
+            fg = b;
+            bg = f;
+          }
+          if (
+            pending &&
+            pending.fg === fg &&
+            pending.bg === bg &&
+            !!pending.bold === bold
+          ) {
+            pending.text += chars;
+          } else {
+            if (pending) runs.push(pending);
+            pending = { text: chars, fg, bg, bold: bold || undefined };
+          }
+        }
+        if (pending) runs.push(pending);
+        // Strip the all-default trailing whitespace run so blank tails don't
+        // waste popover width on giant " " spans.
+        const last = runs[runs.length - 1];
+        if (last && !last.fg && !last.bg && !last.bold) {
+          last.text = last.text.replace(/\s+$/, "");
+          if (!last.text) runs.pop();
+        }
+        lines.push(runs);
       }
-      while (lines.length && lines[lines.length - 1] === "") lines.pop();
-      return lines.length ? lines.join("\n") : null;
+      while (lines.length && lines[lines.length - 1].length === 0) lines.pop();
+      return lines.length ? lines : null;
     });
 
     // Auto-copy on selection: fires when the drag ends inside the terminal.

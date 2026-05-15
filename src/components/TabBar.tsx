@@ -10,6 +10,7 @@ import {
   closeTab,
   dumpTabBuffer,
   getTabPreview,
+  type PreviewRun,
   openMarkCwd,
   renameTab,
   reorderTabs,
@@ -595,8 +596,8 @@ function TabPreviewPopover(props: TabPreviewProps) {
   const PREVIEW_H = 280;
   const GAP = 10;
 
-  const [text, setText] = createSignal<string | null>(getTabPreview(props.tab.id));
-  const iv = window.setInterval(() => setText(getTabPreview(props.tab.id)), 600);
+  const [lines, setLines] = createSignal<PreviewRun[][] | null>(getTabPreview(props.tab.id));
+  const iv = window.setInterval(() => setLines(getTabPreview(props.tab.id)), 600);
   onCleanup(() => clearInterval(iv));
 
   // Clamp the popover inside the viewport. Prefer placement to the right of
@@ -668,7 +669,7 @@ function TabPreviewPopover(props: TabPreviewProps) {
           overflow: "hidden",
           color: C.text,
         }}>
-          <Show when={text()} fallback={
+          <Show when={lines() && lines()!.length > 0} fallback={
             <div style={{ color: C.text3, "font-family": "inherit", opacity: 0.8 }}>
               {profile().status === "connected"
                 ? "(empty)"
@@ -677,7 +678,23 @@ function TabPreviewPopover(props: TabPreviewProps) {
                   : "Not connected"}
             </div>
           }>
-            {text()}
+            <For each={lines()!}>
+              {(runs) => (
+                <div>
+                  <Show when={runs.length > 0} fallback={<span>{" "}</span>}>
+                    <For each={runs}>
+                      {(run) => (
+                        <span style={{
+                          color: run.fg,
+                          background: run.bg,
+                          "font-weight": run.bold ? 600 : 400,
+                        }}>{run.text}</span>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+              )}
+            </For>
           </Show>
         </div>
       </div>
