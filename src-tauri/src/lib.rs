@@ -30,6 +30,21 @@ pub fn run() {
         .manage(state)
         .manage(git_watch::GitWatchState::new())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                use objc2::AllocAnyThread;
+                use objc2::MainThreadMarker;
+                use objc2_app_kit::{NSApplication, NSImage};
+                use objc2_foundation::NSData;
+                let icon_bytes = include_bytes!("../icons/icon.png");
+                unsafe {
+                    let data = NSData::with_bytes(icon_bytes);
+                    let mtm = MainThreadMarker::new().expect("setup must run on main thread");
+                    if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+                        NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image));
+                    }
+                }
+            }
             #[cfg(target_os = "windows")]
             {
                 if let Some(window) = app.get_webview_window("main") {
