@@ -4,6 +4,13 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SideTabBarMode {
+    Split,
+    Hover,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralSettings {
     #[serde(default = "default_scrollback")]
     pub scrollback: u32,
@@ -14,6 +21,41 @@ pub struct GeneralSettings {
     /// Git view auto-refresh polling interval in seconds (SSH sessions).
     #[serde(default = "default_git_poll_secs")]
     pub git_poll_secs: u32,
+    /// App-wide default shell for new Local connections / side terminal when a
+    /// connection has no shell of its own. None falls back to the platform
+    /// default (powershell.exe on Windows, $SHELL or /bin/bash elsewhere).
+    #[serde(default)]
+    pub default_shell: Option<String>,
+    /// Preferred monospace font family for terminals. Prepended to the built-in
+    /// fallback stack. None falls back to the bundled defaults.
+    #[serde(default)]
+    pub font_family: Option<String>,
+    /// Whether the left tab bar reserves layout space or floats over the app.
+    #[serde(default = "default_side_tab_bar_mode")]
+    pub side_tab_bar_mode: SideTabBarMode,
+    /// Hide the left tab bar until the pointer enters the left trigger strip.
+    #[serde(default = "default_side_tab_bar_auto_hide")]
+    pub side_tab_bar_auto_hide: bool,
+    /// Width of the left tab bar in CSS pixels.
+    #[serde(default = "default_side_tab_bar_width")]
+    pub side_tab_bar_width: u32,
+    /// Show a hover preview popover with a thumbnail of the tab's terminal
+    /// viewport when the pointer lingers over a tab in the side bar.
+    #[serde(default = "default_side_tab_bar_preview")]
+    pub side_tab_bar_preview: bool,
+    /// Enable translucent acrylic background. Requires OS-level window effects
+    /// (acrylic on Windows, vibrancy on macOS); the frontend additionally
+    /// drives surface alpha via a CSS variable.
+    #[serde(default = "default_acrylic_enabled")]
+    pub acrylic_enabled: bool,
+    /// Opacity of the app's primary background surfaces when acrylic is on.
+    /// Clamped to [0.3, 1.0]; 1.0 is fully opaque (acrylic effect invisible).
+    #[serde(default = "default_acrylic_opacity")]
+    pub acrylic_opacity: f32,
+    /// Hide the bottom command bar until the pointer enters the bottom trigger
+    /// strip; lets terminals reclaim the row when not in use.
+    #[serde(default = "default_command_bar_auto_hide")]
+    pub command_bar_auto_hide: bool,
 }
 
 impl Default for GeneralSettings {
@@ -23,6 +65,15 @@ impl Default for GeneralSettings {
             font_size: default_font_size(),
             side_font_size: default_side_font_size(),
             git_poll_secs: default_git_poll_secs(),
+            default_shell: None,
+            font_family: None,
+            side_tab_bar_mode: default_side_tab_bar_mode(),
+            side_tab_bar_auto_hide: default_side_tab_bar_auto_hide(),
+            side_tab_bar_width: default_side_tab_bar_width(),
+            side_tab_bar_preview: default_side_tab_bar_preview(),
+            acrylic_enabled: default_acrylic_enabled(),
+            acrylic_opacity: default_acrylic_opacity(),
+            command_bar_auto_hide: default_command_bar_auto_hide(),
         }
     }
 }
@@ -38,6 +89,27 @@ fn default_side_font_size() -> u32 {
 }
 fn default_git_poll_secs() -> u32 {
     5
+}
+fn default_side_tab_bar_mode() -> SideTabBarMode {
+    SideTabBarMode::Split
+}
+fn default_side_tab_bar_auto_hide() -> bool {
+    false
+}
+fn default_side_tab_bar_width() -> u32 {
+    190
+}
+fn default_side_tab_bar_preview() -> bool {
+    true
+}
+fn default_acrylic_enabled() -> bool {
+    false
+}
+fn default_acrylic_opacity() -> f32 {
+    0.75
+}
+fn default_command_bar_auto_hide() -> bool {
+    false
 }
 
 pub fn general_path() -> PathBuf {

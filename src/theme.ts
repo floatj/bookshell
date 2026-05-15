@@ -1,9 +1,9 @@
 /** macOS-style design tokens shared across all components. */
 
 export const C = {
-  bg:         "#1c1c1e",
-  bg2:        "#2c2c2e",
-  bg3:        "#3a3a3c",
+  bg:         "rgba(28,28,30, var(--app-bg-alpha, 1))",
+  bg2:        "rgba(44,44,46, var(--app-bg-alpha, 1))",
+  bg3:        "rgba(58,58,60, var(--app-bg-alpha, 1))",
   bgHover:    "rgba(255,255,255,0.07)",
   bgActive:   "rgba(255,255,255,0.12)",
   border:     "rgba(255,255,255,0.1)",
@@ -26,12 +26,15 @@ export const C = {
   tGreen:     "#28c840",
 } as const;
 
-/** xterm.js theme that matches the macOS dark palette. */
+/** xterm.js theme that matches the macOS dark palette. xterm's WebGL renderer
+ *  cannot resolve CSS variables, so background/cursorAccent are pinned to
+ *  literal hex values — the Terminal component overrides `background` with an
+ *  alpha-aware rgba string when acrylic is enabled. */
 export const xtermTheme = {
-  background:         C.bg,
+  background:         "#1c1c1e",
   foreground:         C.text,
   cursor:             C.text,
-  cursorAccent:       C.bg,
+  cursorAccent:       "#1c1c1e",
   selectionBackground:"rgba(10,132,255,0.3)",
   black:   "#000000", red:     C.red,    green: C.green,  yellow: C.yellow,
   blue:    C.accent,  magenta: C.purple, cyan:  "#5ac8fa", white: "#ebebf5",
@@ -40,6 +43,35 @@ export const xtermTheme = {
   brightBlue:    "#409cff", brightMagenta: "#da8fff",
   brightCyan:    "#70d7ff", brightWhite:   "#ffffff",
 } as const;
+
+/** 16-color ANSI palette indexed 0..15 (basic + bright), drawn from
+ *  xtermTheme so the hover preview popover paints with the same hues the
+ *  live terminal uses. Index 0 is black to match xterm convention. */
+const ANSI16: readonly string[] = [
+  "#000000",            xtermTheme.red,           xtermTheme.green,   xtermTheme.yellow,
+  xtermTheme.blue,      xtermTheme.magenta,       xtermTheme.cyan,    xtermTheme.white,
+  xtermTheme.brightBlack, xtermTheme.brightRed,   xtermTheme.brightGreen, xtermTheme.brightYellow,
+  xtermTheme.brightBlue,  xtermTheme.brightMagenta, xtermTheme.brightCyan, xtermTheme.brightWhite,
+];
+
+/** Step values for xterm's 6×6×6 RGB cube (palette indices 16..231). */
+const CUBE_STEPS = [0, 95, 135, 175, 215, 255] as const;
+
+/** Resolve a palette index (0..255) into a CSS color string using the macOS
+ *  xterm theme for the first 16 entries, the canonical 6×6×6 cube for
+ *  16..231, and the 24-step grayscale ramp for 232..255. */
+export function ansiPaletteColor(idx: number): string {
+  if (idx < 16) return ANSI16[idx];
+  if (idx < 232) {
+    const i = idx - 16;
+    const r = CUBE_STEPS[Math.floor(i / 36) % 6];
+    const g = CUBE_STEPS[Math.floor(i / 6) % 6];
+    const b = CUBE_STEPS[i % 6];
+    return `rgb(${r},${g},${b})`;
+  }
+  const gray = 8 + (idx - 232) * 10;
+  return `rgb(${gray},${gray},${gray})`;
+}
 
 export const overlayStyle = {
   position:           "fixed",

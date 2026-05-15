@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { createStore } from "solid-js/store";
-import { C, xtermTheme } from "../theme";
+import { ansiPaletteColor, C, xtermTheme } from "../theme";
 import { Terminal } from "@xterm/xterm";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { FitAddon } from "@xterm/addon-fit";
@@ -14,16 +14,29 @@ import {
   onTabBufferDump,
   onTabClose,
   onTabData,
+  onTabPreview,
+  type PreviewRun,
   type Tab,
 } from "../stores/tabs";
 import { closeSearch, isSearchOpenFor } from "../stores/search";
-import { general } from "../stores/general";
+import { general, terminalFontFamily } from "../stores/general";
 import { connections, isLinux } from "../stores/connections";
 import { connectTab, reconnectTabFromProfile, restoreCwd } from "../stores/tabs";
 
 interface Props {
   tab: Tab;
   active: boolean;
+  /** When set, the terminal renders at `naturalW x naturalH` CSS pixels and
+   *  is visually shrunk via `transform: scale(scale)`. Used by Mission
+   *  Control (Exposé) grid so the PTY/xterm never sees a resize. Positioned
+   *  at `(cellX, cellY)` in viewport coordinates (page-fixed). */
+  gridLayout?: {
+    cellX: number;
+    cellY: number;
+    naturalW: number;
+    naturalH: number;
+    scale: number;
+  } | null;
 }
 
 interface MatchInfo {
@@ -157,14 +170,24 @@ export function TerminalView(props: Props) {
     DEFAULT_HIGHLIGHT_COLORS.forEach((color, i) => setSlots(i, { color, keyword: "" }));
   }
 
+  // Build an xterm theme whose background respects the acrylic opacity. xterm
+  // accepts CSS rgba strings here; combined with `allowTransparency: true`
+  // the cell background composites over the translucent app surface.
+  function themeForCurrent() {
+    const g = general();
+    const a = g.acrylic_enabled ? Math.max(0.1, Math.min(1, g.acrylic_opacity)) : 1;
+    return { ...xtermTheme, background: `rgba(28,28,30,${a})` };
+  }
+
   onMount(() => {
     term = new Terminal({
       cursorBlink: true,
-      fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
-      fontSize: general().font_size,
+      fontFamily: terminalFontFamily(),
+      fontSize: props.tab.fontSize ?? general().font_size,
       scrollback: general().scrollback,
       allowProposedApi: true,
-      theme: xtermTheme,
+      allowTransparency: true,
+      theme: themeForCurrent(),
     });
     fit = new FitAddon();
     search = new SearchAddon();
@@ -190,11 +213,20 @@ export function TerminalView(props: Props) {
     term.open(host);
     fit.fit();
 
-    // Ctrl+F must reach App.tsx's search handler. xterm would otherwise swallow
-    // it in the capture phase and forward ^F to the shell. Returning false here
-    // tells xterm to skip the event entirely and let it bubble normally.
+    // Some GUI hotkeys collide with xterm's keyboard handling — xterm would
+    // otherwise swallow them in the capture phase and forward the ^x byte to
+    // the shell. Returning false tells xterm to skip the event entirely so
+    // it bubbles up to the window-level handler in App.tsx.
+    //   Ctrl+F            — search
+    //   Ctrl+Shift+E      — Mission Control / Exposé
+    //   Ctrl(+Shift)+ +/-/=/0 — font size zoom (per-tab / global)
     term.attachCustomKeyEventHandler((e) => {
       if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === "f") return false;
+      if (e.ctrlKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") return false;
+      if (e.ctrlKey && !e.altKey && (
+        e.code === "Equal" || e.code === "Minus" || e.code === "Digit0" ||
+        e.code === "NumpadAdd" || e.code === "NumpadSubtract" || e.code === "Numpad0"
+      )) return false;
       return true;
     });
 
@@ -358,6 +390,78 @@ export function TerminalView(props: Props) {
       return out.join("\n");
     });
 
+    // Snapshot the current viewport as styled runs so the side bar's hover
+    // preview popover can paint colors / bold the same way the live terminal
+    // does. Coalesces adjacent cells with identical attributes into a single
+    // run to keep the DOM cost roughly O(color-changes) rather than O(cells).
+    onTabPreview(props.tab.id, () => {
+      if (!term) return null;
+      const buf = term.buffer.active;
+      const start = buf.viewportY;
+      const rows = term.rows;
+      const lines: PreviewRun[][] = [];
+
+      const cssFor = (
+        isDefault: boolean,
+        isRGB: boolean,
+        value: number,
+      ): string | undefined => {
+        if (isDefault) return undefined;
+        if (isRGB) {
+          const r = (value >> 16) & 0xff;
+          const g = (value >> 8) & 0xff;
+          const b = value & 0xff;
+          return `rgb(${r},${g},${b})`;
+        }
+        return ansiPaletteColor(value);
+      };
+
+      for (let y = start; y < start + rows; y++) {
+        const line = buf.getLine(y);
+        if (!line) { lines.push([]); continue; }
+        const runs: PreviewRun[] = [];
+        let pending: PreviewRun | null = null;
+        for (let x = 0; x < line.length; x++) {
+          const cell = line.getCell(x);
+          if (!cell) continue;
+          const chars = cell.getChars() || (cell.getWidth() === 0 ? "" : " ");
+          if (!chars) continue;
+          let fg = cssFor(cell.isFgDefault(), cell.isFgRGB(), cell.getFgColor());
+          let bg = cssFor(cell.isBgDefault(), cell.isBgRGB(), cell.getBgColor());
+          const bold = !!cell.isBold();
+          // Inverse swaps fg/bg, with defaults filled in from the theme.
+          if (cell.isInverse()) {
+            const f = fg ?? xtermTheme.foreground;
+            const b = bg ?? xtermTheme.background;
+            fg = b;
+            bg = f;
+          }
+          if (
+            pending &&
+            pending.fg === fg &&
+            pending.bg === bg &&
+            !!pending.bold === bold
+          ) {
+            pending.text += chars;
+          } else {
+            if (pending) runs.push(pending);
+            pending = { text: chars, fg, bg, bold: bold || undefined };
+          }
+        }
+        if (pending) runs.push(pending);
+        // Strip the all-default trailing whitespace run so blank tails don't
+        // waste popover width on giant " " spans.
+        const last = runs[runs.length - 1];
+        if (last && !last.fg && !last.bg && !last.bold) {
+          last.text = last.text.replace(/\s+$/, "");
+          if (!last.text) runs.pop();
+        }
+        lines.push(runs);
+      }
+      while (lines.length && lines[lines.length - 1].length === 0) lines.pop();
+      return lines.length ? lines : null;
+    });
+
     // Auto-copy on selection: fires when the drag ends inside the terminal.
     const onMouseUp = (e: MouseEvent) => {
       if (e.button !== 0) return; // middle/right-click must not overwrite clipboard
@@ -404,7 +508,11 @@ export function TerminalView(props: Props) {
     onCleanup(() => host.removeEventListener("mousedown", onMouseDown));
 
     const ro = new ResizeObserver(() => {
-      if (props.active) fit?.fit();
+      // Skip fit in grid mode — the host's natural size is held constant via
+      // `width/height: ${natural}px` styles and visually shrunk with a
+      // transform, so we don't want xterm to reflow rows/cols (which would
+      // signal a resize to the PTY).
+      if (props.active && !props.gridLayout) fit?.fit();
     });
     ro.observe(host);
     onCleanup(() => ro.disconnect());
@@ -473,8 +581,26 @@ export function TerminalView(props: Props) {
   createEffect(() => {
     if (!term) return;
     term.options.scrollback = general().scrollback;
-    term.options.fontSize = general().font_size;
+    term.options.fontSize = props.tab.fontSize ?? general().font_size;
+    term.options.fontFamily = terminalFontFamily();
+    term.options.theme = themeForCurrent();
     queueMicrotask(() => fit?.fit());
+  });
+
+  // When ENTERING grid mode (Exposé), force a redraw of every terminal —
+  // xterm-webgl skips draws while the element is hidden, so non-active tabs
+  // would otherwise show a blank canvas. Refresh once per transition; not on
+  // every gridLayout recompute (the layout object changes on window resize
+  // / cell-rect updates and refresh() is not free).
+  let gridWasOpen = false;
+  createEffect(() => {
+    const inGrid = !!props.gridLayout;
+    if (inGrid && !gridWasOpen && term) {
+      requestAnimationFrame(() => {
+        try { term?.refresh(0, term.rows - 1); } catch {}
+      });
+    }
+    gridWasOpen = inGrid;
   });
 
   // When search opens for this tab, focus the input
@@ -486,20 +612,51 @@ export function TerminalView(props: Props) {
 
   onCleanup(() => term?.dispose());
 
+  // Outer wrapper style switches between "stacked" (default — absolute,
+  // visibility-toggled) and "grid" (fixed natural size, CSS-scaled). In
+  // grid mode every terminal is visible at full pre-scale dimensions so
+  // xterm-webgl keeps painting it; the scale is purely visual.
+  const wrapperStyle = () => {
+    const g = props.gridLayout;
+    if (g) {
+      // Border radius scales with the transform, so use a larger raw value
+      // (in pre-scale pixels) to get ~10px visual rounding at typical scales.
+      const radius = Math.round(10 / Math.max(g.scale, 0.0001));
+      return {
+        position: "fixed" as const,
+        top: `${g.cellY}px`,
+        left: `${g.cellX}px`,
+        width: `${g.naturalW}px`,
+        height: `${g.naturalH}px`,
+        transform: `scale(${g.scale})`,
+        "transform-origin": "top left",
+        "pointer-events": "none" as const,
+        // Above the backdrop, below the cell-click capture layer.
+        "z-index": "110",
+        // Rounded corners that match the cell frame (radius scaled to stay
+        // visually constant after the scale transform).
+        "border-radius": `${radius}px`,
+        overflow: "hidden",
+        // Smooth click-to-zoom: animates when gridLayout changes to a
+        // full-pane rect (scale 1) before the overlay closes.
+        transition: "top 0.22s ease, left 0.22s ease, transform 0.22s ease",
+      };
+    }
+    return {
+      position: "absolute" as const,
+      inset: "0",
+      visibility: (props.active ? "visible" : "hidden") as "visible" | "hidden",
+      "pointer-events": (props.active ? "auto" : "none") as "auto" | "none",
+    };
+  };
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: "0",
-        visibility: props.active ? "visible" : "hidden",
-        "pointer-events": props.active ? "auto" : "none",
-      }}
-    >
+    <div style={wrapperStyle()}>
       <div
         ref={host}
         style={{ position: "absolute", inset: "0", padding: "4px" }}
         onclick={() => {
-          if (props.active && !isSearchOpenFor(props.tab.id)) {
+          if (props.active && !props.gridLayout && !isSearchOpenFor(props.tab.id)) {
             term?.focus();
             bumpFit(props.tab.id);
           }

@@ -16,12 +16,18 @@
         "width": 1200,
         "height": 800,
         "minWidth": 600,
-        "minHeight": 400
+        "minHeight": 400,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["acrylic"],
+          "state": "active"
+        }
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

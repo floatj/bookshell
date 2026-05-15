@@ -214,6 +214,7 @@ export interface TabState {
   passthrough: boolean;
   cwd?: string | null;
   git_width?: number | null;
+  font_size?: number | null;
 }
 
 export interface TabsFile {
@@ -232,6 +233,26 @@ export interface GeneralSettings {
   font_size: number;
   side_font_size: number;
   git_poll_secs: number;
+  /** App-wide default shell for new Local connections / side terminal when a
+   *  connection has no shell of its own. null/empty → platform default
+   *  (powershell.exe on Windows, $SHELL or /bin/bash elsewhere). */
+  default_shell?: string | null;
+  /** Preferred monospace font family for terminals. Prepended to the built-in
+   *  fallback stack. null/empty → bundled defaults only. */
+  font_family?: string | null;
+  side_tab_bar_mode: "split" | "hover";
+  side_tab_bar_auto_hide: boolean;
+  side_tab_bar_width: number;
+  side_tab_bar_preview: boolean;
+  /** Enable translucent acrylic background. The window itself is always
+   *  configured with OS-level effects; this toggle drives the in-app surface
+   *  alpha so disabling it falls back to a fully opaque look. */
+  acrylic_enabled: boolean;
+  /** Alpha multiplier for app surfaces when acrylic_enabled. 0.3..1.0. */
+  acrylic_opacity: number;
+  /** Collapse the bottom command bar until the pointer hovers the trigger
+   *  strip along the bottom of the terminal area. */
+  command_bar_auto_hide: boolean;
 }
 
 export interface CommandButton {

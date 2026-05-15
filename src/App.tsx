@@ -3,9 +3,17 @@ import { getVersion } from "@tauri-apps/api/app";
 import { ButtonEditor } from "./components/ButtonEditor";
 import { CommandBar } from "./components/CommandBar";
 import { ConnectionDialog } from "./components/ConnectionDialog";
+import { ExposeView } from "./components/ExposeView";
 import { GitPanel } from "./components/GitPanel";
 import { LogViewer } from "./components/LogViewer";
 import { SideTerminalPanel } from "./components/SideTerminal";
+import {
+  closeExpose,
+  isExposeOpen,
+  openExpose,
+  toggleExpose,
+  zoomingTabId,
+} from "./stores/expose";
 import { isSideTermOpen, toggleSideTerm } from "./stores/sideTerm";
 import { MarkCwdDialog } from "./components/MarkCwdDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -15,11 +23,10 @@ import { gitWidth, isGitOpen, setGitWidth, toggleGit } from "./stores/git";
 import { cycleLayout, layoutMode, setLayout } from "./stores/layout";
 import { api, type Connection } from "./ipc/api";
 import { loadConnections } from "./stores/connections";
-import { loadGeneral } from "./stores/general";
+import { general, loadGeneral, updateGeneral } from "./stores/general";
 import { closeSearch, openSearch, searchTabId } from "./stores/search";
 import { C } from "./theme";
 import {
-  activeTab,
   activeTabId,
   addTab,
   closeMarkCwd,
@@ -33,8 +40,12 @@ import {
   reconnectTabFromProfile,
   restoreTabs,
   setActiveTab,
+  setTabFontSize,
   tabs,
   toggleTabPassthrough,
+  clampFont,
+  FONT_STEP,
+  FONT_DEFAULT,
 } from "./stores/tabs";
 
 const LAYOUT_LABEL: Record<string, string> = {
@@ -43,6 +54,8 @@ const LAYOUT_LABEL: Record<string, string> = {
   "right-split": "⊞ Right",
 };
 
+interface CellRect { x: number; y: number; w: number; h: number; }
+
 export default function App() {
   const [showDialog, setShowDialog] = createSignal(false);
   const [showButtonEditor, setShowButtonEditor] = createSignal(false);
@@ -50,6 +63,45 @@ export default function App() {
   const [showLogs, setShowLogs] = createSignal(false);
   const [colDragging, setColDragging] = createSignal(false);
   const [appVersion, setAppVersion] = createSignal("");
+
+  // Auto-hide toolbar state. Pinned = keep visible until toggled off; hovered =
+  // mouse is in the trigger zone or over the bar itself; auto-shown when no
+  // tabs exist so the user can always find "+ Connect".
+  const [headerPinned, setHeaderPinned] = createSignal(false);
+  const [headerHovered, setHeaderHovered] = createSignal(false);
+  const headerVisible = () => headerPinned() || headerHovered() || tabs().length === 0;
+  let headerHideTimer: number | undefined;
+  function scheduleHide() {
+    if (headerHideTimer) clearTimeout(headerHideTimer);
+    headerHideTimer = window.setTimeout(() => setHeaderHovered(false), 220);
+  }
+  function cancelHide() {
+    if (headerHideTimer) { clearTimeout(headerHideTimer); headerHideTimer = undefined; }
+    setHeaderHovered(true);
+  }
+
+  const [sideTabHovered, setSideTabHovered] = createSignal(false);
+  const sideTabAutoHide = () => general().side_tab_bar_auto_hide;
+  const sideTabMode = () => general().side_tab_bar_mode;
+  const sideTabVisible = () => !sideTabAutoHide() || sideTabHovered() || tabs().length === 0;
+  let sideTabHideTimer: number | undefined;
+  function scheduleSideTabHide() {
+    if (!sideTabAutoHide()) return;
+    if (sideTabHideTimer) clearTimeout(sideTabHideTimer);
+    sideTabHideTimer = window.setTimeout(() => setSideTabHovered(false), 220);
+  }
+  function cancelSideTabHide() {
+    if (sideTabHideTimer) {
+      clearTimeout(sideTabHideTimer);
+      sideTabHideTimer = undefined;
+    }
+    setSideTabHovered(true);
+  }
+
+  // Main pane size — natural (pre-scale) dimensions used by Exposé grid.
+  let mainPaneRef: HTMLDivElement | undefined;
+  const [mainPaneSize, setMainPaneSize] = createSignal({ w: 0, h: 0 });
+  const [cellRects, setCellRects] = createSignal<Map<string, CellRect>>(new Map());
 
   function startColDrag(ev: MouseEvent) {
     ev.preventDefault();
@@ -73,6 +125,16 @@ export default function App() {
   // automatically on every fresh connect or for tabs the user never marked.
   const prevStatus = new Map<string, string>();
   const restoredTabIds = new Set<string>();
+
+  // Apply acrylic opacity to the document root as a CSS variable so all
+  // surfaces using `rgba(..., var(--app-bg-alpha))` update live.
+  createEffect(() => {
+    const g = general();
+    const alpha = g.acrylic_enabled
+      ? Math.max(0.1, Math.min(1, g.acrylic_opacity))
+      : 1;
+    document.documentElement.style.setProperty("--app-bg-alpha", String(alpha));
+  });
 
   createEffect(() => {
     for (const tab of tabs()) {
@@ -99,6 +161,17 @@ export default function App() {
 
   onMount(() => {
     getVersion().then(setAppVersion).catch(() => {});
+
+    // Track main pane size for Exposé's natural-size calculations.
+    if (mainPaneRef) {
+      const measure = () => {
+        const r = mainPaneRef!.getBoundingClientRect();
+        setMainPaneSize({ w: r.width, h: r.height });
+      };
+      measure();
+      const ro = new ResizeObserver(measure);
+      ro.observe(mainPaneRef);
+    }
 
     // Connections must be loaded before tab restore so reconnect can find profiles.
     (async () => {
@@ -141,6 +214,7 @@ export default function App() {
           (e.key === "PageUp" || e.key === "PageDown");
         if (!shiftCombo && !ctrlCombo) return;
         if (isActiveTabPassthrough()) return;
+        if (isExposeOpen()) return;
         // xterm's own input is a hidden <textarea>, so we can't blanket-skip
         // text inputs — instead, allow if focus is inside an .xterm container,
         // and skip only "real" inputs (search box, rename field, dialogs).
@@ -172,9 +246,29 @@ export default function App() {
         return;
       }
 
+      // Ctrl+Shift+H: pin / unpin the auto-hide toolbar. Available even in
+      // passthrough so the user is never stranded without the toolbar.
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "h") {
+        e.preventDefault();
+        setHeaderPinned((v) => !v);
+        return;
+      }
+
       // In passthrough mode, all other GUI hotkeys are released so the remote
       // agent (Claude Code, etc.) can use them.
       if (isActiveTabPassthrough()) return;
+
+      // Exposé takes over the window: only Ctrl+Shift+E (toggle, handled
+      // below) and Esc (handled by ExposeView itself) work. All other
+      // GUI hotkeys (new tab, close tab, search, Ctrl+1..9) would mutate
+      // state under the overlay where the user can't see the effect.
+      if (isExposeOpen()) {
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "e") {
+          e.preventDefault();
+          toggleExpose();
+        }
+        return;
+      }
 
       // Ctrl+Shift+T: new tab
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "t") {
@@ -208,6 +302,14 @@ export default function App() {
           else openSearch(id);
         }
       }
+      // Ctrl+Shift+E: open Mission Control / Exposé grid. Close path is
+      // handled in the early-return branch above (when isExposeOpen()).
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "e") {
+        if (tabs().length >= 2) {
+          e.preventDefault();
+          openExpose();
+        }
+      }
       // Ctrl+1..9: jump to tab by index
       if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key) - 1;
@@ -215,6 +317,31 @@ export default function App() {
         if (idx < list.length) {
           e.preventDefault();
           setActiveTab(list[idx].id);
+        }
+      }
+      // Font zoom: Ctrl + (+/=) larger, Ctrl + - smaller, Ctrl + 0 reset.
+      // Hold Shift to act on the global default instead of the active tab.
+      // Match on e.code so Shift-modified glyphs (=/+, -/_, 0/)) and keyboard
+      // layouts don't change the trigger; numpad keys also work.
+      const isZoomIn = e.code === "Equal" || e.code === "NumpadAdd";
+      const isZoomOut = e.code === "Minus" || e.code === "NumpadSubtract";
+      const isZoomReset = e.code === "Digit0" || e.code === "Numpad0";
+      if (e.ctrlKey && !e.altKey && (isZoomIn || isZoomOut || isZoomReset)) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          const cur = general().font_size;
+          if (isZoomReset) updateGeneral({ font_size: FONT_DEFAULT });
+          else updateGeneral({ font_size: clampFont(cur + (isZoomOut ? -FONT_STEP : FONT_STEP)) });
+        } else {
+          const id = activeTabId();
+          if (!id) return;
+          if (isZoomReset) {
+            setTabFontSize(id, null);
+          } else {
+            const tab = tabs().find((t) => t.id === id);
+            const cur = tab?.fontSize ?? general().font_size;
+            setTabFontSize(id, cur + (isZoomOut ? -FONT_STEP : FONT_STEP));
+          }
         }
       }
     });
@@ -262,44 +389,57 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: "flex", "flex-direction": "column", height: "100%" }}>
-      <div style={headerStyle}>
-        {/* macOS traffic lights */}
-        <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-shrink": 0 }}>
-          <div style={{ width: "12px", height: "12px", "border-radius": "50%", background: C.tRed }} />
-          <div style={{ width: "12px", height: "12px", "border-radius": "50%", background: C.tYellow }} />
-          <div style={{ width: "12px", height: "12px", "border-radius": "50%", background: C.tGreen }} />
-        </div>
+    <div style={{ display: "flex", "flex-direction": "column", height: "100%", position: "relative" }}>
+      {/* Top hover trigger — a thin strip that catches the mouse near the top
+          edge so the auto-hide toolbar can slide down. Also doubles as a
+          subtle accent hint that something lives up there. Pointer-events are
+          off when the bar is pinned/visible so it doesn't block clicks on the
+          buttons immediately below. */}
+      <div
+        onMouseEnter={cancelHide}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: "6px",
+          background: headerVisible() ? "transparent" : C.accent,
+          opacity: headerVisible() ? 0 : 0.25,
+          "z-index": 9,
+          "pointer-events": headerVisible() ? "none" : "auto",
+          transition: "opacity 0.18s",
+        }}
+      />
 
-        <strong style={{ color: C.accent, "font-size": "13px", "letter-spacing": "0.04em" }}>BOOKSHELL</strong>
-
-        <Show when={activeTab()}>
-          {(t) => (
-            <span style={{ "font-size": "12px", color: C.text2, display: "flex", "align-items": "center", gap: "6px" }}>
-              <span style={{ color: t().status === "connected" ? C.green : C.yellow }}>
-                {t().status === "connected" ? "●" : "◐"} {t().status}
-              </span>
-              <Show when={t().errorMessage}>
-                <span style={{ color: C.red }}>{t().errorMessage}</span>
-              </Show>
-              <Show when={t().passthrough}>
-                <span
-                  title="AI passthrough on (Ctrl+Shift+P to disable)"
-                  style={{
-                    background: C.purple,
-                    color: "#fff",
-                    padding: "1px 7px",
-                    "border-radius": "10px",
-                    "font-size": "11px",
-                    "font-weight": 600,
-                  }}
-                >
-                  🤖 passthrough
-                </span>
-              </Show>
-            </span>
-          )}
-        </Show>
+      <div
+        onMouseEnter={cancelHide}
+        onMouseLeave={() => { if (!headerPinned()) scheduleHide(); }}
+        style={{
+          ...headerStyle,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          "z-index": 10,
+          transform: headerVisible() ? "translateY(0)" : "translateY(-100%)",
+          transition: "transform 0.18s ease-out",
+          "box-shadow": headerVisible() ? "0 2px 8px rgba(0,0,0,0.35)" : "none",
+        }}
+      >
+        <div style={{ display: "flex", gap: "4px", "align-items": "center", width: "100%" }}>
+          <button
+            onClick={() => setHeaderPinned((v) => !v)}
+            style={{
+              ...toolBtn,
+              color: headerPinned() ? C.accent : C.text3,
+              border: `1px solid ${headerPinned() ? C.accentBdr : C.border}`,
+              background: headerPinned() ? C.accentBg : "transparent",
+              padding: "3px 7px",
+            }}
+            title={headerPinned() ? "Unpin toolbar (Ctrl+Shift+H)" : "Pin toolbar (Ctrl+Shift+H)"}
+          >
+            {headerPinned() ? "📌" : "📍"}
+          </button>
 
         {/* right-side toolbar */}
         <div style={{ "margin-left": "auto", display: "flex", gap: "4px", "align-items": "center" }}>
@@ -308,6 +448,21 @@ export default function App() {
               {LAYOUT_LABEL[layoutMode()]}
             </button>
           </Show>
+          <button
+            onClick={() => {
+              if (tabs().length >= 2 || isExposeOpen()) toggleExpose();
+            }}
+            style={{
+              ...toolBtn,
+              background: isExposeOpen() ? C.accentBg : "transparent",
+              color: isExposeOpen() ? C.accent : C.text2,
+              border: `1px solid ${isExposeOpen() ? C.accentBdr : C.border}`,
+            }}
+            title="Exposé — show all tabs (Ctrl+Shift+E)"
+            disabled={tabs().length < 2 && !isExposeOpen()}
+          >
+            ▦ Expose
+          </button>
           <button
             onClick={() => { const id = activeTabId(); if (id) toggleSideTerm(id); }}
             style={{
@@ -371,10 +526,35 @@ export default function App() {
             </span>
           </Show>
         </div>
+        </div>
       </div>
 
-      <div style={{ display: "flex", flex: 1, "min-height": 0 }}>
-        <TabBar onNew={() => setShowDialog(true)} />
+      <div style={{ display: "flex", flex: 1, "min-height": 0, position: "relative" }}>
+        <div
+          onMouseEnter={cancelSideTabHide}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            width: "8px",
+            background: sideTabVisible() ? "transparent" : C.accent,
+            opacity: sideTabVisible() ? 0 : 0.24,
+            "z-index": 7,
+            "pointer-events": sideTabVisible() ? "none" : "auto",
+            transition: "opacity 0.18s",
+          }}
+        />
+        <TabBar
+          onNew={() => setShowDialog(true)}
+          width={general().side_tab_bar_width}
+          mode={sideTabMode()}
+          visible={sideTabVisible()}
+          autoHide={sideTabAutoHide()}
+          onShow={cancelSideTabHide}
+          onHide={scheduleSideTabHide}
+          onWidthChange={(width) => void updateGeneral({ side_tab_bar_width: width })}
+        />
         <div style={{ flex: 1, display: "flex", "flex-direction": "column", "min-width": 0 }}>
           <div style={{
             flex: 1,
@@ -382,7 +562,10 @@ export default function App() {
             "min-height": 0,
             "flex-direction": layoutMode() === "vertical" ? "column" : "row",
           }}>
-            <div style={{ flex: 1, position: "relative", "min-width": 0, "min-height": 0 }}>
+            <div
+              ref={mainPaneRef}
+              style={{ flex: 1, position: "relative", "min-width": 0, "min-height": 0 }}
+            >
               <Show
                 when={tabs().length > 0}
                 fallback={
@@ -393,7 +576,44 @@ export default function App() {
                 }
               >
                 <For each={tabs()}>
-                  {(t) => <TerminalView tab={t} active={t.id === activeTabId()} />}
+                  {(t) => {
+                    const gridLayout = () => {
+                      if (!isExposeOpen()) return null;
+                      const nat = mainPaneSize();
+                      if (nat.w === 0 || nat.h === 0) return null;
+                      // Zooming tab animates to the full main-pane rect (scale 1).
+                      if (zoomingTabId() === t.id && mainPaneRef) {
+                        const r = mainPaneRef.getBoundingClientRect();
+                        return {
+                          cellX: r.left,
+                          cellY: r.top,
+                          naturalW: nat.w,
+                          naturalH: nat.h,
+                          scale: 1,
+                        };
+                      }
+                      const cell = cellRects().get(t.id);
+                      if (!cell) return null;
+                      const scale = Math.min(cell.w / nat.w, cell.h / nat.h);
+                      // Center the scaled terminal inside the cell (object-fit:contain).
+                      const offsetX = (cell.w - nat.w * scale) / 2;
+                      const offsetY = (cell.h - nat.h * scale) / 2;
+                      return {
+                        cellX: cell.x + offsetX,
+                        cellY: cell.y + offsetY,
+                        naturalW: nat.w,
+                        naturalH: nat.h,
+                        scale,
+                      };
+                    };
+                    return (
+                      <TerminalView
+                        tab={t}
+                        active={t.id === activeTabId()}
+                        gridLayout={gridLayout()}
+                      />
+                    );
+                  }}
                 </For>
               </Show>
             </div>
@@ -462,6 +682,20 @@ export default function App() {
       </Show>
       <Show when={showLogs()}>
         <LogViewer onClose={() => setShowLogs(false)} />
+      </Show>
+      <Show when={isExposeOpen() && tabs().length > 0}>
+        <ExposeView
+          natural={mainPaneSize()}
+          onCellRects={setCellRects}
+          onActivate={(id) => {
+            setActiveTab(id);
+            // startZoom() has already been called by ExposeView; the terminal
+            // is animating to full-pane rect. Wait for the CSS transition
+            // (matches `transition: 0.22s` in Terminal.tsx's grid-mode style)
+            // then dismiss the overlay.
+            setTimeout(() => closeExpose(), 230);
+          }}
+        />
       </Show>
     </div>
   );

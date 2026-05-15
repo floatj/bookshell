@@ -1,4 +1,4 @@
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createSignal, For, type JSX, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { C } from "../theme";
 
@@ -8,6 +8,13 @@ export interface MenuItem {
   separator?: boolean;
   danger?: boolean;
   submenu?: MenuItem[];
+  /** Custom submenu content. When provided, replaces the default submenu list.
+   *  The function receives a `close` callback the renderer should call after acting. */
+  customSubmenu?: (close: () => void) => JSX.Element;
+  /** Optional left-side swatch (small colored dot) shown before the label. */
+  swatch?: string | null;
+  /** Render a checkmark on the right. */
+  checked?: boolean;
 }
 
 interface Props {
@@ -66,11 +73,11 @@ export function ContextMenu(props: Props) {
             >
               <div
                 onClick={() => {
-                  if (item.submenu) return;
+                  if (item.submenu || item.customSubmenu) return;
                   item.onClick?.();
                   props.onClose();
                 }}
-                onMouseEnter={() => setSubmenuFor(item.submenu ? i() : null)}
+                onMouseEnter={() => setSubmenuFor(item.submenu || item.customSubmenu ? i() : null)}
                 style={{
                   padding: "5px 14px",
                   cursor: "default",
@@ -85,8 +92,23 @@ export function ContextMenu(props: Props) {
                 onMouseOver={(e) => (e.currentTarget.style.background = C.bgHover)}
                 onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
               >
+                <Show when={item.swatch !== undefined}>
+                  <span
+                    style={{
+                      width: "10px",
+                      height: "10px",
+                      "border-radius": "50%",
+                      background: item.swatch ?? "transparent",
+                      border: item.swatch ? "none" : `1px dashed ${C.text3}`,
+                      "flex-shrink": 0,
+                    }}
+                  />
+                </Show>
                 <span style={{ flex: 1 }}>{item.label}</span>
-                {item.submenu && <span style={{ opacity: 0.5, "font-size": "11px" }}>▸</span>}
+                <Show when={item.checked}>
+                  <span style={{ opacity: 0.8, "font-size": "11px" }}>✓</span>
+                </Show>
+                {(item.submenu || item.customSubmenu) && <span style={{ opacity: 0.5, "font-size": "11px" }}>▸</span>}
                 <Show when={item.submenu && submenuFor() === i()}>
                   <div
                     style={{
@@ -118,6 +140,25 @@ export function ContextMenu(props: Props) {
                         </div>
                       )}
                     </For>
+                  </div>
+                </Show>
+                <Show when={item.customSubmenu && submenuFor() === i()}>
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      position: "absolute",
+                      left: "100%",
+                      top: "0",
+                      "margin-left": "2px",
+                      background: "rgba(38,38,40,0.95)",
+                      "backdrop-filter": "blur(20px) saturate(180%)",
+                      border: `1px solid ${C.border}`,
+                      "border-radius": "10px",
+                      padding: "10px",
+                      "box-shadow": "0 8px 32px rgba(0,0,0,0.55)",
+                    }}
+                  >
+                    {item.customSubmenu!(props.onClose)}
                   </div>
                 </Show>
               </div>

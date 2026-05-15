@@ -1,13 +1,16 @@
-import { createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 
-const [tabBarWidth, setTabBarWidth] = createSignal(190);
 const MIN_W = 140;
 const MAX_W = 400;
+const PREVIEW_DELAY_MS = 450;
 import { C } from "../theme";
 import {
   activeTabId,
   closeTab,
   dumpTabBuffer,
+  getTabPreview,
+  type PreviewRun,
   openMarkCwd,
   renameTab,
   reorderTabs,
@@ -20,10 +23,42 @@ import {
   type TabStatus,
 } from "../stores/tabs";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { ColorPickerDialog } from "./ColorPickerDialog";
 import { api } from "../ipc/api";
+import { general } from "../stores/general";
+
+/** Convert a hex color to rgba with the given alpha. Falls back to transparent
+ *  if parsing fails so a bad value never breaks the tab render. */
+export function hexToRgba(hex: string | null | undefined, alpha: number): string {
+  if (!hex) return "transparent";
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 0xff},${(n >> 8) & 0xff},${n & 0xff},${alpha})`;
+}
+
+/** Solid tint applied to a tab row (left bar) or label (Exposé). Mirrors the
+ *  side bar's active/hover alpha curve so both surfaces stay consistent. */
+export function tabBgFor(color: string | null | undefined, active: boolean, hovered: boolean): string {
+  if (!color) return active ? C.bgActive : hovered ? C.bgHover : "transparent";
+  return hexToRgba(color, active ? (hovered ? 0.38 : 0.32) : hovered ? 0.25 : 0.18);
+}
+
+/** Foreground colour for a tab's name label — matches tabBgFor's pairing. */
+export function tabFgFor(color: string | null | undefined, active: boolean): string {
+  if (!color) return C.text;
+  return active ? color : hexToRgba(color, 0.85);
+}
 
 interface Props {
   onNew: () => void;
+  width: number;
+  mode: "split" | "hover";
+  visible: boolean;
+  autoHide: boolean;
+  onShow: () => void;
+  onHide: () => void;
+  onWidthChange: (width: number) => void;
 }
 
 const statusColor: Record<TabStatus, string> = {
@@ -40,14 +75,28 @@ const statusGlyph: Record<TabStatus, string> = {
   error: "!",
 };
 
-const COLORS = [
-  { name: "Default", value: null },
-  { name: "Red",    value: C.red    },
-  { name: "Orange", value: C.orange },
-  { name: "Yellow", value: C.yellow },
-  { name: "Green",  value: C.green  },
-  { name: "Blue",   value: C.accent },
-  { name: "Purple", value: C.purple },
+/** 4×4 palette of preset tab colors. Tuned to read clearly on the dark
+ *  macOS-style background; each row roughly groups warm → cool → neutral. */
+const PRESET_COLORS: { name: string; value: string }[] = [
+  { name: "Red",       value: "#ff453a" },
+  { name: "Coral",     value: "#ff6f61" },
+  { name: "Orange",    value: "#ff9f0a" },
+  { name: "Amber",     value: "#ffb340" },
+
+  { name: "Yellow",    value: "#ffd60a" },
+  { name: "Lime",      value: "#9beb52" },
+  { name: "Green",     value: "#30d158" },
+  { name: "Teal",      value: "#40c8c0" },
+
+  { name: "Cyan",      value: "#5ac8fa" },
+  { name: "Sky",       value: "#64d2ff" },
+  { name: "Blue",      value: "#0a84ff" },
+  { name: "Indigo",    value: "#5e5ce6" },
+
+  { name: "Purple",    value: "#bf5af2" },
+  { name: "Magenta",   value: "#ff2d92" },
+  { name: "Pink",      value: "#ff8aa8" },
+  { name: "Graphite",  value: "#9aa0a6" },
 ];
 
 const ICONS = [
@@ -67,22 +116,63 @@ function shortCwd(p: string): string {
 }
 
 export function TabBar(props: Props) {
+  const [tabBarWidth, setTabBarWidth] = createSignal(props.width);
   const [menu, setMenu] = createSignal<{ x: number; y: number; tab: Tab } | null>(null);
+  const [pickerTabId, setPickerTabId] = createSignal<string | null>(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [draggingId, setDraggingId] = createSignal<string | null>(null);
+  const [hoveredTabId, setHoveredTabId] = createSignal<string | null>(null);
   const [resizing, setResizing] = createSignal(false);
   /** Tab id under cursor (or "__end__"). Null when not over any drop target. */
   const [dropTargetId, setDropTargetId] = createSignal<string | null>(null);
+  const isHoverMode = () => props.mode === "hover";
+
+  /** Hover preview popover. Anchored to the right edge of the hovered tab's
+   *  row; content is the tab's xterm viewport text, refreshed each open. */
+  interface PreviewState { tabId: string; anchorTop: number; anchorRight: number; }
+  const [preview, setPreview] = createSignal<PreviewState | null>(null);
+  let previewTimer: number | undefined;
+  function clearPreviewTimer() {
+    if (previewTimer !== undefined) {
+      clearTimeout(previewTimer);
+      previewTimer = undefined;
+    }
+  }
+  function schedulePreview(tabId: string, rowEl: HTMLElement) {
+    clearPreviewTimer();
+    if (!general().side_tab_bar_preview) return;
+    previewTimer = window.setTimeout(() => {
+      const r = rowEl.getBoundingClientRect();
+      setPreview({ tabId, anchorTop: r.top, anchorRight: r.right });
+    }, PREVIEW_DELAY_MS);
+  }
+  function dismissPreview(tabId: string) {
+    clearPreviewTimer();
+    setPreview((p) => (p && p.tabId === tabId ? null : p));
+  }
+  onCleanup(clearPreviewTimer);
+  createEffect(() => {
+    if (!general().side_tab_bar_preview) {
+      clearPreviewTimer();
+      setPreview(null);
+    }
+  });
+
+  createEffect(() => {
+    setTabBarWidth(clampWidth(props.width));
+  });
 
   function startResize(ev: MouseEvent) {
     ev.preventDefault();
     setResizing(true);
     const startX = ev.clientX;
     const startW = tabBarWidth();
+    let nextW = startW;
     const onMove = (e: MouseEvent) =>
-      setTabBarWidth(Math.max(MIN_W, Math.min(MAX_W, startW + (e.clientX - startX))));
+      setTabBarWidth((nextW = clampWidth(startW + (e.clientX - startX))));
     const onUp = () => {
       setResizing(false);
+      props.onWidthChange(nextW);
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
@@ -149,10 +239,20 @@ export function TabBar(props: Props) {
       },
       {
         label: "Color",
-        submenu: COLORS.map((c) => ({
-          label: c.name + (tab.color === c.value ? "  ✓" : ""),
-          onClick: () => setTabColor(tab.id, c.value),
-        })),
+        swatch: tab.color ?? null,
+        customSubmenu: (close) => (
+          <ColorPaletteGrid
+            current={tab.color ?? null}
+            onPick={(c) => {
+              setTabColor(tab.id, c);
+              close();
+            }}
+            onCustomize={() => {
+              setPickerTabId(tab.id);
+              close();
+            }}
+          />
+        ),
       },
       {
         label: "Icon",
@@ -199,16 +299,43 @@ export function TabBar(props: Props) {
   }
 
   return (
-    <div style={{ display: "flex", width: `${tabBarWidth()}px`, "flex-shrink": 0 }}>
-    <div style={containerStyle}>
+    <div
+      onMouseEnter={props.onShow}
+      onMouseLeave={() => { if (props.autoHide) props.onHide(); }}
+      style={{
+        display: "flex",
+        width: isHoverMode() || props.visible ? `${tabBarWidth()}px` : "0px",
+        height: "100%",
+        "flex-shrink": 0,
+        position: isHoverMode() ? "absolute" : "relative",
+        top: isHoverMode() ? "0" : undefined,
+        bottom: isHoverMode() ? "0" : undefined,
+        left: isHoverMode() ? "0" : undefined,
+        "z-index": isHoverMode() ? 8 : undefined,
+        transform: props.visible ? "translateX(0)" : "translateX(calc(-100% - 8px))",
+        transition: "width 0.18s ease, transform 0.18s ease",
+        "pointer-events": props.visible ? "auto" : "none",
+        overflow: "hidden",
+        "box-shadow": isHoverMode() && props.visible ? "12px 0 36px rgba(0,0,0,0.35)" : "none",
+      }}
+    >
+    <div style={{ ...containerStyle, ...(isHoverMode() ? acrylicContainerStyle : {}) }}>
       <For each={tabs()}>
         {(t) => (
           <div
             data-tab-slot={t.id}
-            onMouseDown={(e) => startDrag(e, t.id)}
-            onClick={() => setActiveTab(t.id)}
+            onMouseDown={(e) => { dismissPreview(t.id); startDrag(e, t.id); }}
+            onClick={() => { dismissPreview(t.id); setActiveTab(t.id); }}
             onDblClick={() => setRenamingId(t.id)}
             onContextMenu={(e) => openMenu(e, t)}
+            onMouseEnter={(e) => {
+              setHoveredTabId(t.id);
+              schedulePreview(t.id, e.currentTarget);
+            }}
+            onMouseLeave={() => {
+              setHoveredTabId((id) => id === t.id ? null : id);
+              dismissPreview(t.id);
+            }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
@@ -224,8 +351,7 @@ export function TabBar(props: Props) {
             tabindex={t.id === activeTabId() ? 0 : -1}
             style={{
               ...tabStyle,
-              background: t.id === activeTabId() ? C.bgActive : "transparent",
-              "border-left-color": t.color ?? "transparent",
+              ...tabColorStyle(t.color, t.id === activeTabId(), hoveredTabId() === t.id),
               opacity: draggingId() === t.id ? 0.35 : 1,
               "border-top": dropTargetId() === t.id && draggingId() && draggingId() !== t.id
                 ? `2px solid ${C.accent}`
@@ -247,7 +373,18 @@ export function TabBar(props: Props) {
             <Show
               when={renamingId() === t.id}
               fallback={
-                <span style={{ flex: 1, overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap" }}>
+                <span
+                  style={{
+                    flex: 1,
+                    overflow: "hidden",
+                    "text-overflow": "ellipsis",
+                    "white-space": "nowrap",
+                    color: t.color
+                      ? (t.id === activeTabId() ? t.color : hexToRgba(t.color, 0.85))
+                      : C.text,
+                    "font-weight": t.color && t.id === activeTabId() ? 600 : 400,
+                  }}
+                >
                   {t.name}
                 </span>
               }
@@ -308,6 +445,30 @@ export function TabBar(props: Props) {
           />
         )}
       </Show>
+
+      <Show when={pickerTabId()}>
+        {(id) => {
+          const t = tabs().find((x) => x.id === id());
+          return (
+            <ColorPickerDialog
+              initial={t?.color ?? null}
+              onSave={(c) => setTabColor(id(), c)}
+              onClose={() => setPickerTabId(null)}
+            />
+          );
+        }}
+      </Show>
+
+      <Show when={preview()}>
+        {(p) => {
+          const tab = () => tabs().find((x) => x.id === p().tabId) ?? null;
+          return (
+            <Show when={tab()}>
+              {(t) => <TabPreviewPopover tab={t()} anchorTop={p().anchorTop} anchorRight={p().anchorRight} />}
+            </Show>
+          );
+        }}
+      </Show>
     </div>
     {/* right-edge drag handle */}
     <div
@@ -326,6 +487,10 @@ export function TabBar(props: Props) {
   );
 }
 
+function clampWidth(w: number): number {
+  return Math.max(MIN_W, Math.min(MAX_W, Math.round(w || 190)));
+}
+
 const containerStyle = {
   flex: 1,
   background: C.bg2,
@@ -337,6 +502,14 @@ const containerStyle = {
   "min-width": 0,
 } as const;
 
+const acrylicContainerStyle = {
+  background: "rgba(28,28,30,0.62)",
+  "backdrop-filter": "blur(24px) saturate(180%)",
+  "-webkit-backdrop-filter": "blur(24px) saturate(180%)",
+  border: `1px solid ${C.border}`,
+  "border-left": "none",
+} as const;
+
 const tabStyle = {
   display: "flex",
   "flex-direction": "column",
@@ -345,10 +518,17 @@ const tabStyle = {
   cursor: "grab",
   "font-size": "12px",
   color: C.text,
-  "border-left": "3px solid transparent",
   "user-select": "none",
-  transition: "background 0.1s",
+  position: "relative" as const,
+  transition: "background 0.12s ease",
 } as const;
+
+/** Build the dynamic part of a tab's style: a flat solid tint of the chosen
+ *  color across the whole tab. Active tabs get a slightly stronger alpha so
+ *  they still stand out against their inactive siblings. */
+function tabColorStyle(color: string | null | undefined, active: boolean, hovered: boolean) {
+  return { background: tabBgFor(color, active, hovered) };
+}
 
 const tabTopRowStyle = {
   display: "flex",
@@ -401,3 +581,205 @@ const newBtnStyle = {
   "margin-top": "4px",
   transition: "color 0.1s, border-color 0.1s",
 } as const;
+
+interface TabPreviewProps {
+  tab: Tab;
+  anchorTop: number;
+  anchorRight: number;
+}
+
+/** Floating preview of a tab's current terminal viewport. Pulls text via
+ *  getTabPreview() (registered by Terminal.tsx) and re-samples every 600ms so
+ *  the user sees live output if the tab is actively printing. */
+function TabPreviewPopover(props: TabPreviewProps) {
+  const PREVIEW_W = 460;
+  const PREVIEW_H = 280;
+  const GAP = 10;
+
+  const [lines, setLines] = createSignal<PreviewRun[][] | null>(getTabPreview(props.tab.id));
+  const iv = window.setInterval(() => setLines(getTabPreview(props.tab.id)), 600);
+  onCleanup(() => clearInterval(iv));
+
+  // Clamp the popover inside the viewport. Prefer placement to the right of
+  // the tab; fall back to overlapping when there isn't room (small windows).
+  const layout = () => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = props.anchorRight + GAP;
+    if (left + PREVIEW_W > vw - 8) left = Math.max(8, vw - PREVIEW_W - 8);
+    let top = props.anchorTop;
+    if (top + PREVIEW_H > vh - 8) top = Math.max(8, vh - PREVIEW_H - 8);
+    return { left, top };
+  };
+
+  const profile = () => props.tab;
+
+  return (
+    <Portal>
+      <div
+        style={{
+          position: "fixed",
+          top: `${layout().top}px`,
+          left: `${layout().left}px`,
+          width: `${PREVIEW_W}px`,
+          height: `${PREVIEW_H}px`,
+          background: "rgba(18,18,20,0.96)",
+          "backdrop-filter": "blur(24px) saturate(160%)",
+          "-webkit-backdrop-filter": "blur(24px) saturate(160%)",
+          border: `1px solid ${C.border}`,
+          "border-radius": "10px",
+          "box-shadow": "0 16px 40px rgba(0,0,0,0.55)",
+          "z-index": 50,
+          "pointer-events": "none",
+          display: "flex",
+          "flex-direction": "column",
+          overflow: "hidden",
+          color: C.text,
+        }}
+      >
+        <div style={{
+          display: "flex",
+          "align-items": "center",
+          gap: "6px",
+          padding: "6px 10px",
+          "border-bottom": `1px solid ${C.borderSub}`,
+          background: "rgba(255,255,255,0.03)",
+          "font-size": "11px",
+          color: C.text2,
+        }}>
+          <span style={{ color: statusColor[profile().status], "font-size": "10px" }}>
+            {statusGlyph[profile().status]}
+          </span>
+          {profile().icon && <span>{profile().icon}</span>}
+          <span style={{
+            "font-weight": 600,
+            color: profile().color ?? C.text,
+            overflow: "hidden",
+            "text-overflow": "ellipsis",
+            "white-space": "nowrap",
+          }}>{profile().name}</span>
+        </div>
+        <div style={{
+          flex: 1,
+          padding: "8px 10px",
+          "font-family": '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
+          "font-size": "10px",
+          "line-height": "1.25",
+          "white-space": "pre",
+          overflow: "hidden",
+          color: C.text,
+        }}>
+          <Show when={lines() && lines()!.length > 0} fallback={
+            <div style={{ color: C.text3, "font-family": "inherit", opacity: 0.8 }}>
+              {profile().status === "connected"
+                ? "(empty)"
+                : profile().status === "connecting"
+                  ? "Connecting…"
+                  : "Not connected"}
+            </div>
+          }>
+            <For each={lines()!}>
+              {(runs) => (
+                <div>
+                  <Show when={runs.length > 0} fallback={<span>{" "}</span>}>
+                    <For each={runs}>
+                      {(run) => (
+                        <span style={{
+                          color: run.fg,
+                          background: run.bg,
+                          "font-weight": run.bold ? 600 : 400,
+                        }}>{run.text}</span>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </Show>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
+interface PaletteProps {
+  current: string | null;
+  onPick: (color: string | null) => void;
+  onCustomize: () => void;
+}
+
+function ColorPaletteGrid(props: PaletteProps) {
+  const isSelected = (v: string | null) =>
+    (props.current ?? null)?.toLowerCase() === (v ?? null)?.toLowerCase();
+
+  return (
+    <div style={{ display: "flex", "flex-direction": "column", gap: "10px", "min-width": "188px" }}>
+      <div style={{ display: "grid", "grid-template-columns": "repeat(4, 36px)", gap: "6px" }}>
+        <For each={PRESET_COLORS}>
+          {(c) => (
+            <button
+              title={c.name}
+              onClick={() => props.onPick(c.value)}
+              style={{
+                width: "36px",
+                height: "36px",
+                "border-radius": "8px",
+                border: isSelected(c.value)
+                  ? `2px solid ${C.text}`
+                  : `1px solid rgba(255,255,255,0.08)`,
+                background: c.value,
+                cursor: "pointer",
+                padding: 0,
+                "box-shadow": isSelected(c.value)
+                  ? `0 0 0 2px rgba(0,0,0,0.4), 0 0 12px ${c.value}80`
+                  : "inset 0 1px 0 rgba(255,255,255,0.15)",
+                transition: "transform 0.08s ease, box-shadow 0.15s",
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.transform = "scale(1.08)")}
+              onMouseOut={(e) => (e.currentTarget.style.transform = "scale(1)")}
+            />
+          )}
+        </For>
+      </div>
+
+      <div style={{ display: "flex", gap: "6px" }}>
+        <button
+          onClick={() => props.onPick(null)}
+          style={{
+            flex: 1,
+            background: isSelected(null) ? C.bgActive : "transparent",
+            color: C.text,
+            border: `1px solid ${C.border}`,
+            "border-radius": "6px",
+            padding: "6px 8px",
+            "font-size": "12px",
+            cursor: "pointer",
+          }}
+          onMouseOver={(e) => (e.currentTarget.style.background = C.bgHover)}
+          onMouseOut={(e) =>
+            (e.currentTarget.style.background = isSelected(null) ? C.bgActive : "transparent")
+          }
+        >
+          Default
+        </button>
+        <button
+          onClick={() => props.onCustomize()}
+          style={{
+            flex: 1,
+            background: "transparent",
+            color: C.text,
+            border: `1px solid ${C.border}`,
+            "border-radius": "6px",
+            padding: "6px 8px",
+            "font-size": "12px",
+            cursor: "pointer",
+          }}
+          onMouseOver={(e) => (e.currentTarget.style.background = C.bgHover)}
+          onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
+        >
+          🎨 Customize…
+        </button>
+      </div>
+    </div>
+  );
+}

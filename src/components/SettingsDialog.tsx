@@ -4,6 +4,7 @@ import { api, type Connection, type CommandButton, type TabState } from "../ipc/
 import { C, overlayStyle as baseOverlay, inputStyle, btnPrimary, btnSecondary, btnDanger } from "../theme";
 import { CloseX } from "./CloseX";
 import { general, updateGeneral } from "../stores/general";
+import { platformDefaultShell } from "../stores/connections";
 import {
   activeTabId,
   flushPersistedState,
@@ -124,6 +125,23 @@ function GeneralPane() {
         <span style={{ "font-size": "12px", opacity: 0.7 }}>px</span>
       </div>
 
+      <label>Font family</label>
+      <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <input
+          type="text"
+          placeholder='e.g. Monaco, "MesloLGS NF"'
+          value={general().font_family ?? ""}
+          onChange={(e) => {
+            const v = e.currentTarget.value.trim();
+            updateGeneral({ font_family: v.length > 0 ? v : null });
+          }}
+          style={{ ...input, "min-width": "260px", flex: 1, "font-family": "monospace" }}
+        />
+        <span style={{ "font-size": "12px", opacity: 0.7, "flex-basis": "100%" }}>
+          Must be a monospace font installed on this machine; falls back to JetBrains Mono / Cascadia Code / Consolas when blank.
+        </span>
+      </div>
+
       <label>Side terminal font</label>
       <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
         <input
@@ -138,6 +156,52 @@ function GeneralPane() {
           style={{ ...input, width: "80px" }}
         />
         <span style={{ "font-size": "12px", opacity: 0.7 }}>px（右側 side terminal）</span>
+      </div>
+
+      <label>Side tab bar</label>
+      <div style={{ display: "flex", gap: "10px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <select
+          value={general().side_tab_bar_mode}
+          onChange={(e) => {
+            updateGeneral({ side_tab_bar_mode: e.currentTarget.value as "split" | "hover" });
+          }}
+          style={{ ...input, width: "150px" }}
+        >
+          <option value="split">Split</option>
+          <option value="hover">Hover acrylic</option>
+        </select>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().side_tab_bar_auto_hide}
+            onChange={(e) => updateGeneral({ side_tab_bar_auto_hide: e.currentTarget.checked })}
+          />
+          <span>Auto hide</span>
+        </label>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().side_tab_bar_preview}
+            onChange={(e) => updateGeneral({ side_tab_bar_preview: e.currentTarget.checked })}
+          />
+          <span>Hover preview</span>
+        </label>
+      </div>
+
+      <label>Tab bar width</label>
+      <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
+        <input
+          type="number"
+          min="140"
+          max="400"
+          value={general().side_tab_bar_width}
+          onChange={(e) => {
+            const v = Math.max(140, Math.min(400, parseInt(e.currentTarget.value) || 190));
+            updateGeneral({ side_tab_bar_width: v });
+          }}
+          style={{ ...input, width: "80px" }}
+        />
+        <span style={{ "font-size": "12px", opacity: 0.7 }}>px</span>
       </div>
 
       <label>Git auto-refresh</label>
@@ -156,8 +220,73 @@ function GeneralPane() {
         <span style={{ "font-size": "12px", opacity: 0.7 }}>秒（SSH polling 間隔；local 使用 FS watch 無視此值）</span>
       </div>
 
+      <label>Default shell</label>
+      <div style={{ display: "flex", gap: "6px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <input
+          type="text"
+          placeholder={platformDefaultShell()}
+          value={general().default_shell ?? ""}
+          onChange={(e) => {
+            const v = e.currentTarget.value.trim();
+            updateGeneral({ default_shell: v.length > 0 ? v : null });
+          }}
+          style={{ ...input, "min-width": "360px", flex: 1, "font-family": "monospace" }}
+        />
+        <span style={{ "font-size": "12px", opacity: 0.7, "flex-basis": "100%" }}>
+          Used by new Local connections when no per-connection shell is set. Wrap paths with spaces in double quotes,
+          e.g. <code>"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo</code>.
+        </span>
+      </div>
+
+      <label>Acrylic background</label>
+      <div style={{ display: "flex", gap: "10px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().acrylic_enabled}
+            onChange={(e) => updateGeneral({ acrylic_enabled: e.currentTarget.checked })}
+          />
+          <span>Enable</span>
+        </label>
+        <input
+          type="range"
+          min="0.1"
+          max="1"
+          step="0.05"
+          value={general().acrylic_opacity}
+          disabled={!general().acrylic_enabled}
+          onInput={(e) => {
+            const v = parseFloat(e.currentTarget.value);
+            if (!Number.isNaN(v)) updateGeneral({ acrylic_opacity: v });
+          }}
+          style={{ width: "160px", opacity: general().acrylic_enabled ? 1 : 0.4 }}
+        />
+        <span style={{ "font-size": "12px", opacity: 0.7, "min-width": "44px" }}>
+          {Math.round(general().acrylic_opacity * 100)}%
+        </span>
+        <span style={{ "font-size": "12px", opacity: 0.55, "flex-basis": "100%" }}>
+          Lower opacity = more desktop blur shows through. Restart to fully apply
+          OS-level window effects on some platforms.
+        </span>
+      </div>
+
+      <label>Command bar</label>
+      <div style={{ display: "flex", gap: "10px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().command_bar_auto_hide}
+            onChange={(e) => updateGeneral({ command_bar_auto_hide: e.currentTarget.checked })}
+          />
+          <span>Auto hide</span>
+        </label>
+        <span style={{ "font-size": "12px", opacity: 0.7, "flex-basis": "100%" }}>
+          Collapse the bottom button row until you hover the trigger strip along the bottom edge.
+        </span>
+      </div>
+
       <div style={{ "grid-column": "1 / -1", "margin-top": "16px", opacity: 0.6, "font-size": "12px" }}>
-        Theme picker, font family, configurable hotkeys and tab session restore will land here later.
+        Theme picker, configurable hotkeys and tab session restore will land here later.
       </div>
     </div>
   );
