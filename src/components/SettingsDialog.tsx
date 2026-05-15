@@ -221,6 +221,38 @@ function GeneralPane() {
         </span>
       </div>
 
+      <label>Acrylic background</label>
+      <div style={{ display: "flex", gap: "10px", "align-items": "center", "flex-wrap": "wrap" }}>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().acrylic_enabled}
+            onChange={(e) => updateGeneral({ acrylic_enabled: e.currentTarget.checked })}
+          />
+          <span>Enable</span>
+        </label>
+        <input
+          type="range"
+          min="0.1"
+          max="1"
+          step="0.05"
+          value={general().acrylic_opacity}
+          disabled={!general().acrylic_enabled}
+          onInput={(e) => {
+            const v = parseFloat(e.currentTarget.value);
+            if (!Number.isNaN(v)) updateGeneral({ acrylic_opacity: v });
+          }}
+          style={{ width: "160px", opacity: general().acrylic_enabled ? 1 : 0.4 }}
+        />
+        <span style={{ "font-size": "12px", opacity: 0.7, "min-width": "44px" }}>
+          {Math.round(general().acrylic_opacity * 100)}%
+        </span>
+        <span style={{ "font-size": "12px", opacity: 0.55, "flex-basis": "100%" }}>
+          Lower opacity = more desktop blur shows through. Restart to fully apply
+          OS-level window effects on some platforms.
+        </span>
+      </div>
+
       <div style={{ "grid-column": "1 / -1", "margin-top": "16px", opacity: 0.6, "font-size": "12px" }}>
         Theme picker, font family, configurable hotkeys and tab session restore will land here later.
       </div>

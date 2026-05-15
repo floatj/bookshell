@@ -39,6 +39,15 @@ pub struct GeneralSettings {
     /// viewport when the pointer lingers over a tab in the side bar.
     #[serde(default = "default_side_tab_bar_preview")]
     pub side_tab_bar_preview: bool,
+    /// Enable translucent acrylic background. Requires OS-level window effects
+    /// (acrylic on Windows, vibrancy on macOS); the frontend additionally
+    /// drives surface alpha via a CSS variable.
+    #[serde(default = "default_acrylic_enabled")]
+    pub acrylic_enabled: bool,
+    /// Opacity of the app's primary background surfaces when acrylic is on.
+    /// Clamped to [0.3, 1.0]; 1.0 is fully opaque (acrylic effect invisible).
+    #[serde(default = "default_acrylic_opacity")]
+    pub acrylic_opacity: f32,
 }
 
 impl Default for GeneralSettings {
@@ -53,6 +62,8 @@ impl Default for GeneralSettings {
             side_tab_bar_auto_hide: default_side_tab_bar_auto_hide(),
             side_tab_bar_width: default_side_tab_bar_width(),
             side_tab_bar_preview: default_side_tab_bar_preview(),
+            acrylic_enabled: default_acrylic_enabled(),
+            acrylic_opacity: default_acrylic_opacity(),
         }
     }
 }
@@ -80,6 +91,12 @@ fn default_side_tab_bar_width() -> u32 {
 }
 fn default_side_tab_bar_preview() -> bool {
     true
+}
+fn default_acrylic_enabled() -> bool {
+    false
+}
+fn default_acrylic_opacity() -> f32 {
+    0.75
 }
 
 pub fn general_path() -> PathBuf {

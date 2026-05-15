@@ -11,6 +11,8 @@ const defaults: GeneralSettings = {
   side_tab_bar_auto_hide: false,
   side_tab_bar_width: 190,
   side_tab_bar_preview: true,
+  acrylic_enabled: false,
+  acrylic_opacity: 0.75,
 };
 
 const [general, setGeneral] = createSignal<GeneralSettings>(defaults);

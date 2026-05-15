@@ -170,6 +170,15 @@ export function TerminalView(props: Props) {
     DEFAULT_HIGHLIGHT_COLORS.forEach((color, i) => setSlots(i, { color, keyword: "" }));
   }
 
+  // Build an xterm theme whose background respects the acrylic opacity. xterm
+  // accepts CSS rgba strings here; combined with `allowTransparency: true`
+  // the cell background composites over the translucent app surface.
+  function themeForCurrent() {
+    const g = general();
+    const a = g.acrylic_enabled ? Math.max(0.1, Math.min(1, g.acrylic_opacity)) : 1;
+    return { ...xtermTheme, background: `rgba(28,28,30,${a})` };
+  }
+
   onMount(() => {
     term = new Terminal({
       cursorBlink: true,
@@ -177,7 +186,8 @@ export function TerminalView(props: Props) {
       fontSize: props.tab.fontSize ?? general().font_size,
       scrollback: general().scrollback,
       allowProposedApi: true,
-      theme: xtermTheme,
+      allowTransparency: true,
+      theme: themeForCurrent(),
     });
     fit = new FitAddon();
     search = new SearchAddon();
@@ -572,6 +582,7 @@ export function TerminalView(props: Props) {
     if (!term) return;
     term.options.scrollback = general().scrollback;
     term.options.fontSize = props.tab.fontSize ?? general().font_size;
+    term.options.theme = themeForCurrent();
     queueMicrotask(() => fit?.fit());
   });
 

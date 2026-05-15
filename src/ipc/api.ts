@@ -241,6 +241,12 @@ export interface GeneralSettings {
   side_tab_bar_auto_hide: boolean;
   side_tab_bar_width: number;
   side_tab_bar_preview: boolean;
+  /** Enable translucent acrylic background. The window itself is always
+   *  configured with OS-level effects; this toggle drives the in-app surface
+   *  alpha so disabling it falls back to a fully opaque look. */
+  acrylic_enabled: boolean;
+  /** Alpha multiplier for app surfaces when acrylic_enabled. 0.3..1.0. */
+  acrylic_opacity: number;
 }
 
 export interface CommandButton {

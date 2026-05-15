@@ -126,6 +126,16 @@ export default function App() {
   const prevStatus = new Map<string, string>();
   const restoredTabIds = new Set<string>();
 
+  // Apply acrylic opacity to the document root as a CSS variable so all
+  // surfaces using `rgba(..., var(--app-bg-alpha))` update live.
+  createEffect(() => {
+    const g = general();
+    const alpha = g.acrylic_enabled
+      ? Math.max(0.1, Math.min(1, g.acrylic_opacity))
+      : 1;
+    document.documentElement.style.setProperty("--app-bg-alpha", String(alpha));
+  });
+
   createEffect(() => {
     for (const tab of tabs()) {
       const prev = prevStatus.get(tab.id);

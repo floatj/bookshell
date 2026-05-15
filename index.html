@@ -7,9 +7,10 @@
     <link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css" />
     <link rel="stylesheet" href="/node_modules/highlight.js/styles/github-dark.css" />
     <style>
+      :root { --app-bg-alpha: 1; }
       html, body, #root {
         height: 100%; margin: 0;
-        background: #1c1c1e;
+        background: rgba(28,28,30, var(--app-bg-alpha));
         color: #f2f2f7;
         font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, sans-serif;
         font-size: 13px;

@@ -1,9 +1,9 @@
 /** macOS-style design tokens shared across all components. */
 
 export const C = {
-  bg:         "#1c1c1e",
-  bg2:        "#2c2c2e",
-  bg3:        "#3a3a3c",
+  bg:         "rgba(28,28,30, var(--app-bg-alpha, 1))",
+  bg2:        "rgba(44,44,46, var(--app-bg-alpha, 1))",
+  bg3:        "rgba(58,58,60, var(--app-bg-alpha, 1))",
   bgHover:    "rgba(255,255,255,0.07)",
   bgActive:   "rgba(255,255,255,0.12)",
   border:     "rgba(255,255,255,0.1)",
@@ -26,12 +26,15 @@ export const C = {
   tGreen:     "#28c840",
 } as const;
 
-/** xterm.js theme that matches the macOS dark palette. */
+/** xterm.js theme that matches the macOS dark palette. xterm's WebGL renderer
+ *  cannot resolve CSS variables, so background/cursorAccent are pinned to
+ *  literal hex values — the Terminal component overrides `background` with an
+ *  alpha-aware rgba string when acrylic is enabled. */
 export const xtermTheme = {
-  background:         C.bg,
+  background:         "#1c1c1e",
   foreground:         C.text,
   cursor:             C.text,
-  cursorAccent:       C.bg,
+  cursorAccent:       "#1c1c1e",
   selectionBackground:"rgba(10,132,255,0.3)",
   black:   "#000000", red:     C.red,    green: C.green,  yellow: C.yellow,
   blue:    C.accent,  magenta: C.purple, cyan:  "#5ac8fa", white: "#ebebf5",
