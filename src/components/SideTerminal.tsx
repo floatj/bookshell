@@ -19,6 +19,7 @@ import {
 import { layoutMode, layoutVertical } from "../stores/layout";
 import { isLinux } from "../stores/connections";
 import { activeTabId } from "../stores/tabs";
+import { subscribeSessionData } from "../stores/sessionData";
 import { CloseX } from "./CloseX";
 
 export function SideTerminalPanel() {
@@ -243,7 +244,7 @@ function SideTerminalView(props: { sessionId: string; parentTabId: string }) {
       api.sshResize(props.sessionId, cols, rows).catch(() => {});
     });
 
-    const ulData = await api.onSshData(props.sessionId, (bytes) => term?.write(bytes));
+    const ulData = subscribeSessionData(props.sessionId, (bytes) => term?.write(bytes));
     const ulClose = await api.onSshClose(props.sessionId, (reason) => {
       term?.write(`\r\n\x1b[31m[side terminal closed: ${reason}]\x1b[0m\r\n`);
       // Clear the panel session so the user can reopen.

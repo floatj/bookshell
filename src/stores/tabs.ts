@@ -1,7 +1,9 @@
 import { createEffect, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
-import { api, type Connection, type TabState, type UnlistenFn } from "../ipc/api";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { api, type Connection, type TabState } from "../ipc/api";
 import { connections } from "./connections";
+import { subscribeSessionData } from "./sessionData";
 
 export type TabStatus = "connecting" | "connected" | "disconnected" | "error";
 
@@ -235,7 +237,7 @@ export async function captureCwdViaPty(tabId: string): Promise<string | null> {
     };
     const timer = setTimeout(() => finish(null), 3000);
 
-    unlisten = await api.onSshData(sid, (bytes) => {
+    unlisten = subscribeSessionData(sid, (bytes) => {
       buffer += decoder.decode(bytes, { stream: true });
       if (buffer.length > 65536) buffer = buffer.slice(-32768);
 
@@ -353,7 +355,7 @@ export async function connectTab(
     const sid = await api.sshConnect(args);
     updateTab(tabId, { status: "connected", sessionId: sid });
 
-    const ulData = await api.onSshData(sid, (bytes) => {
+    const ulData = subscribeSessionData(sid, (bytes) => {
       dataListeners.get(tabId)?.(bytes);
     });
     const ulClose = await api.onSshClose(sid, (reason) => {
@@ -378,7 +380,7 @@ export async function connectTabLocal(
     const sid = await api.localOpenPty(args);
     updateTab(tabId, { status: "connected", sessionId: sid });
 
-    const ulData = await api.onSshData(sid, (bytes) => {
+    const ulData = subscribeSessionData(sid, (bytes) => {
       dataListeners.get(tabId)?.(bytes);
     });
     const ulClose = await api.onSshClose(sid, (reason) => {
