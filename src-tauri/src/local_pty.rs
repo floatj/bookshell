@@ -1,5 +1,6 @@
 use crate::general::load_general;
 use crate::logger;
+use crate::output_pipe;
 use crate::ssh::{Cmd, SessionHandle};
 use crate::AppState;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
@@ -186,11 +187,11 @@ pub async fn local_open_pty(
         .map(|h| h.path.clone())
         .unwrap_or_default();
     let log_tx = log_handle.map(|h| h.tx);
+    let (output_tx, output_task) = output_pipe::spawn_output_pipe(on_data, log_tx);
 
-    // Reader: blocking read in a dedicated OS thread, push bytes to frontend
-    // and (if logging enabled) into the logger channel. Moving `log_tx` in
-    // here means it's dropped when the PTY closes, which signals the logger
-    // task to flush its footer and close the file.
+    // Reader: blocking read in a dedicated OS thread, pushing bytes into the
+    // bounded output pump. If the UI cannot keep up, this blocks and lets the
+    // OS PTY backpressure the child process.
     std::thread::spawn(move || {
         let mut reader = reader;
         let mut buf = [0u8; 8192];
@@ -199,12 +200,9 @@ pub async fn local_open_pty(
                 Ok(0) => break,
                 Ok(n) => {
                     let bytes = buf[..n].to_vec();
-                    if let Some(tx) = &log_tx {
-                        // blocking_send: this is a plain std::thread, not a
-                        // tokio task, so async .send() isn't usable here.
-                        let _ = tx.blocking_send(bytes.clone());
+                    if output_tx.blocking_send(bytes).is_err() {
+                        break;
                     }
-                    let _ = on_data.send(InvokeResponseBody::Raw(bytes));
                 }
                 Err(_) => break,
             }
@@ -234,6 +232,7 @@ pub async fn local_open_pty(
             child_for_task,
         )
         .await;
+        let _ = output_task.await;
         sessions_clone.remove(&session_id_clone);
         let _ = app_for_close.emit(&close_event, close_reason);
     });

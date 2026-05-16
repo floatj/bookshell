@@ -6,6 +6,7 @@ mod git;
 mod git_watch;
 mod local_pty;
 mod logger;
+mod output_pipe;
 mod ssh;
 mod tabs;
 mod webview;

@@ -1,4 +1,5 @@
 use crate::logger;
+use crate::output_pipe::{self, OutputSender};
 use crate::AppState;
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -305,6 +306,7 @@ pub async fn ssh_connect(
         .map(|h| h.path.clone())
         .unwrap_or_default();
     let log_tx = log_handle.map(|h| h.tx);
+    let (output_tx, output_task) = output_pipe::spawn_output_pipe(on_data, log_tx);
 
     let handle = SessionHandle {
         tx: cmd_tx.clone(),
@@ -326,8 +328,8 @@ pub async fn ssh_connect(
             channel_id,
             session_for_task,
             &mut cmd_rx,
-            on_data,
-            log_tx,
+            output_tx,
+            output_task,
             true,
         )
         .await;
@@ -391,6 +393,7 @@ pub async fn ssh_open_pty(
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Cmd>(64);
     let channel_id = channel.id();
+    let (output_tx, output_task) = output_pipe::spawn_output_pipe(on_data, None);
 
     let handle = SessionHandle {
         tx: cmd_tx.clone(),
@@ -412,8 +415,8 @@ pub async fn ssh_open_pty(
             channel_id,
             session_for_task,
             &mut cmd_rx,
-            on_data,
-            None,
+            output_tx,
+            output_task,
             false,
         )
         .await;
@@ -430,38 +433,36 @@ async fn run_session(
     channel_id: ChannelId,
     session: Arc<Mutex<Handle<Client>>>,
     cmd_rx: &mut mpsc::Receiver<Cmd>,
-    on_data: Channel<InvokeResponseBody>,
-    log_tx: Option<mpsc::Sender<Vec<u8>>>,
+    output_tx: OutputSender,
+    output_task: tokio::task::JoinHandle<()>,
     is_primary: bool,
 ) -> String {
     let _ = session_id;
-    loop {
+    let reason = loop {
         tokio::select! {
             msg = channel.wait() => {
                 match msg {
                     Some(ChannelMsg::Data { data }) => {
                         let bytes: Vec<u8> = data.to_vec();
-                        if let Some(tx) = &log_tx {
-                            let _ = tx.send(bytes.clone()).await;
+                        if output_tx.send(bytes).await.is_err() {
+                            break "output pipe closed".into();
                         }
-                        let _ = on_data.send(InvokeResponseBody::Raw(bytes));
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         let bytes: Vec<u8> = data.to_vec();
-                        if let Some(tx) = &log_tx {
-                            let _ = tx.send(bytes.clone()).await;
+                        if output_tx.send(bytes).await.is_err() {
+                            break "output pipe closed".into();
                         }
-                        let _ = on_data.send(InvokeResponseBody::Raw(bytes));
                     }
                     Some(ChannelMsg::Eof) => {}
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
-                        return format!("exit {}", exit_status);
+                        break format!("exit {}", exit_status);
                     }
                     Some(ChannelMsg::Close) => {
-                        return "remote closed".into();
+                        break "remote closed".into();
                     }
                     None => {
-                        return "channel ended".into();
+                        break "channel ended".into();
                     }
                     _ => {}
                 }
@@ -470,7 +471,7 @@ async fn run_session(
                 match cmd {
                     Some(Cmd::Write(bytes)) => {
                         if let Err(e) = channel.data(&bytes[..]).await {
-                            return format!("write error: {}", e);
+                            break format!("write error: {}", e);
                         }
                     }
                     Some(Cmd::Resize(cols, rows)) => {
@@ -488,12 +489,15 @@ async fn run_session(
                                 .await;
                         }
                         let _ = channel_id;
-                        return "closed by client".into();
+                        break "closed by client".into();
                     }
                 }
             }
         }
-    }
+    };
+    drop(output_tx);
+    let _ = output_task.await;
+    reason
 }
 
 #[tauri::command]
