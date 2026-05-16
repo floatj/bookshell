@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type AuthMethod = "password";
@@ -30,16 +30,22 @@ export const api = {
     password: string;
     cols: number;
     rows: number;
+    onData: Channel<ArrayBuffer>;
   }) => invoke<string>("ssh_connect", params),
 
-  sshOpenPty: (parentSessionId: string, cols: number, rows: number) =>
-    invoke<string>("ssh_open_pty", { parentSessionId, cols, rows }),
+  sshOpenPty: (
+    parentSessionId: string,
+    cols: number,
+    rows: number,
+    onData: Channel<ArrayBuffer>,
+  ) => invoke<string>("ssh_open_pty", { parentSessionId, cols, rows, onData }),
 
   localOpenPty: (params: {
     shell?: string | null;
     cwd?: string | null;
     cols: number;
     rows: number;
+    onData: Channel<ArrayBuffer>;
   }) => invoke<string>("local_open_pty", params),
 
   sshWrite: (sessionId: string, data: string) =>

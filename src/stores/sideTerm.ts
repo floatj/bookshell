@@ -1,6 +1,7 @@
 import { createStore } from "solid-js/store";
 import { api } from "../ipc/api";
 import { connections } from "./connections";
+import { createPendingDataPipe } from "./sessionData";
 import { activeTab, tabs as allTabs } from "./tabs";
 
 interface SideTermEntry {
@@ -21,6 +22,7 @@ interface SideTermState {
 }
 
 const [state, setState] = createStore<SideTermState>({ entries: {}, width: 380, height: 300 });
+const sideTermDataPipes = new Map<string, () => void>();
 
 export const sideTermState = state;
 
@@ -56,6 +58,7 @@ export async function openSideTerm(parentTabId: string) {
 
   if (state.entries[parentTabId]?.sessionId) return;
 
+  const dataPipe = createPendingDataPipe();
   try {
     // For local tabs we can't share a single SSH session — spawn a fresh
     // local PTY using the same shell, optionally starting in the saved
@@ -69,10 +72,14 @@ export async function openSideTerm(parentTabId: string) {
         cwd: tab.cwd ?? profile?.cwd ?? null,
         cols: 100,
         rows: 30,
+        onData: dataPipe.channel,
       });
     } else {
-      sid = await api.sshOpenPty(tab.sessionId, 100, 30);
+      sid = await api.sshOpenPty(tab.sessionId, 100, 30, dataPipe.channel);
     }
+    dataPipe.bindSession(sid);
+    sideTermDataPipes.get(parentTabId)?.();
+    sideTermDataPipes.set(parentTabId, () => dataPipe.dispose());
     setState("entries", parentTabId, {
       sessionId: sid,
       open: true,
@@ -91,6 +98,9 @@ export async function openSideTerm(parentTabId: string) {
       }
     }
   } catch (e: any) {
+    dataPipe.dispose();
+    sideTermDataPipes.get(parentTabId)?.();
+    sideTermDataPipes.delete(parentTabId);
     setState("entries", parentTabId, {
       sessionId: null,
       open: true,
@@ -106,6 +116,8 @@ export async function closeSideTerm(parentTabId: string, hardKill: boolean = tru
   if (hardKill && e.sessionId) {
     await api.sshDisconnect(e.sessionId).catch(() => {});
   }
+  sideTermDataPipes.get(parentTabId)?.();
+  sideTermDataPipes.delete(parentTabId);
   setState("entries", parentTabId, {
     sessionId: null,
     open: false,

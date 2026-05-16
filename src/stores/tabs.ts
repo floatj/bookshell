@@ -3,7 +3,7 @@ import { createStore } from "solid-js/store";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { api, type Connection, type TabState } from "../ipc/api";
 import { connections } from "./connections";
-import { subscribeSessionData } from "./sessionData";
+import { createPendingDataPipe, subscribeSessionData } from "./sessionData";
 
 export type TabStatus = "connecting" | "connected" | "disconnected" | "error";
 
@@ -351,8 +351,10 @@ export async function connectTab(
   },
 ) {
   updateTab(tabId, { status: "connecting", errorMessage: undefined });
+  const dataPipe = createPendingDataPipe();
   try {
-    const sid = await api.sshConnect(args);
+    const sid = await api.sshConnect({ ...args, onData: dataPipe.channel });
+    dataPipe.bindSession(sid);
     updateTab(tabId, { status: "connected", sessionId: sid });
 
     const ulData = subscribeSessionData(sid, (bytes) => {
@@ -362,8 +364,9 @@ export async function connectTab(
       updateTab(tabId, { status: "disconnected", errorMessage: reason });
       closeListeners.get(tabId)?.(reason);
     });
-    sessionUnlisteners.set(tabId, [ulData, ulClose]);
+    sessionUnlisteners.set(tabId, [ulData, ulClose, () => dataPipe.dispose()]);
   } catch (e: any) {
+    dataPipe.dispose();
     updateTab(tabId, { status: "error", errorMessage: String(e) });
     throw e;
   }
@@ -376,8 +379,10 @@ export async function connectTabLocal(
   args: { shell?: string | null; cwd?: string | null; cols: number; rows: number },
 ) {
   updateTab(tabId, { status: "connecting", errorMessage: undefined });
+  const dataPipe = createPendingDataPipe();
   try {
-    const sid = await api.localOpenPty(args);
+    const sid = await api.localOpenPty({ ...args, onData: dataPipe.channel });
+    dataPipe.bindSession(sid);
     updateTab(tabId, { status: "connected", sessionId: sid });
 
     const ulData = subscribeSessionData(sid, (bytes) => {
@@ -387,8 +392,9 @@ export async function connectTabLocal(
       updateTab(tabId, { status: "disconnected", errorMessage: reason });
       closeListeners.get(tabId)?.(reason);
     });
-    sessionUnlisteners.set(tabId, [ulData, ulClose]);
+    sessionUnlisteners.set(tabId, [ulData, ulClose, () => dataPipe.dispose()]);
   } catch (e: any) {
+    dataPipe.dispose();
     updateTab(tabId, { status: "error", errorMessage: String(e) });
     throw e;
   }

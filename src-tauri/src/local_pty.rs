@@ -5,6 +5,7 @@ use crate::AppState;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex as StdMutex};
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
@@ -95,6 +96,7 @@ pub async fn local_open_pty(
     cwd: Option<String>,
     cols: u32,
     rows: u32,
+    on_data: Channel<InvokeResponseBody>,
 ) -> Result<String, String> {
     let session_id = Uuid::new_v4().to_string();
     let pty_system = native_pty_system();
@@ -169,7 +171,6 @@ pub async fn local_open_pty(
         .map_err(|e| format!("take writer: {}", e))?;
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Cmd>(64);
-    let data_event = format!("ssh://data/{}", session_id);
     let close_event = format!("ssh://close/{}", session_id);
 
     // Per-session logger — same scheme as SSH sessions, label is the shell's
@@ -190,8 +191,6 @@ pub async fn local_open_pty(
     // and (if logging enabled) into the logger channel. Moving `log_tx` in
     // here means it's dropped when the PTY closes, which signals the logger
     // task to flush its footer and close the file.
-    let app_for_reader = app.clone();
-    let data_event_for_reader = data_event.clone();
     std::thread::spawn(move || {
         let mut reader = reader;
         let mut buf = [0u8; 8192];
@@ -205,7 +204,7 @@ pub async fn local_open_pty(
                         // tokio task, so async .send() isn't usable here.
                         let _ = tx.blocking_send(bytes.clone());
                     }
-                    let _ = app_for_reader.emit(&data_event_for_reader, bytes);
+                    let _ = on_data.send(InvokeResponseBody::Raw(bytes));
                 }
                 Err(_) => break,
             }

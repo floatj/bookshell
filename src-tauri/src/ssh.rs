@@ -6,6 +6,7 @@ use russh::client::{self, Handle};
 use russh::{ChannelId, ChannelMsg, Disconnect};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc, Mutex};
 
@@ -239,6 +240,7 @@ pub async fn ssh_connect(
     password: String,
     cols: u32,
     rows: u32,
+    on_data: Channel<InvokeResponseBody>,
 ) -> Result<String, String> {
     let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -319,12 +321,12 @@ pub async fn ssh_connect(
 
     tokio::spawn(async move {
         let close_reason = run_session(
-            app_clone.clone(),
             sid_clone.clone(),
             channel,
             channel_id,
             session_for_task,
             &mut cmd_rx,
+            on_data,
             log_tx,
             true,
         )
@@ -348,6 +350,7 @@ pub async fn ssh_open_pty(
     parent_session_id: String,
     cols: u32,
     rows: u32,
+    on_data: Channel<InvokeResponseBody>,
 ) -> Result<String, String> {
     let parent_session = state
         .sessions
@@ -404,12 +407,12 @@ pub async fn ssh_open_pty(
 
     tokio::spawn(async move {
         let close_reason = run_session(
-            app_clone.clone(),
             sid_clone.clone(),
             channel,
             channel_id,
             session_for_task,
             &mut cmd_rx,
+            on_data,
             None,
             false,
         )
@@ -422,16 +425,16 @@ pub async fn ssh_open_pty(
 }
 
 async fn run_session(
-    app: AppHandle,
     session_id: String,
     mut channel: russh::Channel<russh::client::Msg>,
     channel_id: ChannelId,
     session: Arc<Mutex<Handle<Client>>>,
     cmd_rx: &mut mpsc::Receiver<Cmd>,
+    on_data: Channel<InvokeResponseBody>,
     log_tx: Option<mpsc::Sender<Vec<u8>>>,
     is_primary: bool,
 ) -> String {
-    let data_event = format!("ssh://data/{}", session_id);
+    let _ = session_id;
     loop {
         tokio::select! {
             msg = channel.wait() => {
@@ -441,14 +444,14 @@ async fn run_session(
                         if let Some(tx) = &log_tx {
                             let _ = tx.send(bytes.clone()).await;
                         }
-                        let _ = app.emit(&data_event, bytes);
+                        let _ = on_data.send(InvokeResponseBody::Raw(bytes));
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         let bytes: Vec<u8> = data.to_vec();
                         if let Some(tx) = &log_tx {
                             let _ = tx.send(bytes.clone()).await;
                         }
-                        let _ = app.emit(&data_event, bytes);
+                        let _ = on_data.send(InvokeResponseBody::Raw(bytes));
                     }
                     Some(ChannelMsg::Eof) => {}
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
