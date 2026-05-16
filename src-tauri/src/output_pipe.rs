@@ -10,6 +10,7 @@ const FLUSH_AFTER: Duration = Duration::from_millis(2);
 pub type OutputSender = mpsc::Sender<Vec<u8>>;
 
 pub fn spawn_output_pipe(
+    label: String,
     on_data: Channel<InvokeResponseBody>,
     log_tx: Option<mpsc::Sender<Vec<u8>>>,
 ) -> (OutputSender, JoinHandle<()>) {
@@ -17,6 +18,7 @@ pub fn spawn_output_pipe(
     let handle = tokio::spawn(async move {
         let mut pending = Vec::with_capacity(FLUSH_BYTES);
         let mut deadline: Option<Instant> = None;
+        let mut warned_log_drop = false;
 
         loop {
             if pending.is_empty() {
@@ -25,7 +27,7 @@ pub fn spawn_output_pipe(
                         pending.extend_from_slice(&bytes);
                         deadline = Some(Instant::now() + FLUSH_AFTER);
                         if pending.len() >= FLUSH_BYTES {
-                            flush(&on_data, &log_tx, &mut pending).await;
+                            flush(&label, &on_data, &log_tx, &mut warned_log_drop, &mut pending);
                             deadline = None;
                         }
                     }
@@ -42,7 +44,7 @@ pub fn spawn_output_pipe(
                         Some(bytes) => {
                             pending.extend_from_slice(&bytes);
                             if pending.len() >= FLUSH_BYTES {
-                                flush(&on_data, &log_tx, &mut pending).await;
+                                flush(&label, &on_data, &log_tx, &mut warned_log_drop, &mut pending);
                                 deadline = None;
                             }
                         }
@@ -50,23 +52,25 @@ pub fn spawn_output_pipe(
                     }
                 }
                 _ = &mut sleep_until => {
-                    flush(&on_data, &log_tx, &mut pending).await;
+                    flush(&label, &on_data, &log_tx, &mut warned_log_drop, &mut pending);
                     deadline = None;
                 }
             }
         }
 
         if !pending.is_empty() {
-            flush(&on_data, &log_tx, &mut pending).await;
+            flush(&label, &on_data, &log_tx, &mut warned_log_drop, &mut pending);
         }
     });
 
     (tx, handle)
 }
 
-async fn flush(
+fn flush(
+    label: &str,
     on_data: &Channel<InvokeResponseBody>,
     log_tx: &Option<mpsc::Sender<Vec<u8>>>,
+    warned_log_drop: &mut bool,
     pending: &mut Vec<u8>,
 ) {
     if pending.is_empty() {
@@ -75,6 +79,9 @@ async fn flush(
     let bytes = std::mem::take(pending);
     let _ = on_data.send(InvokeResponseBody::Raw(bytes.clone()));
     if let Some(tx) = log_tx {
-        let _ = tx.send(bytes).await;
+        if tx.try_send(bytes).is_err() && !*warned_log_drop {
+            *warned_log_drop = true;
+            log::warn!("session log queue full for {}; dropping log chunks", label);
+        }
     }
 }

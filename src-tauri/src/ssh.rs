@@ -1,3 +1,4 @@
+use crate::general::load_general;
 use crate::logger;
 use crate::output_pipe::{self, OutputSender};
 use crate::AppState;
@@ -300,13 +301,18 @@ pub async fn ssh_connect(
     let channel_id = channel.id();
 
     let log_label = format!("{}@{}", user, host);
-    let log_handle = logger::start_logger(&log_label).await.ok();
+    let log_handle = if load_general().session_logging_enabled {
+        logger::start_logger(&log_label).await.ok()
+    } else {
+        None
+    };
     let log_path = log_handle
         .as_ref()
         .map(|h| h.path.clone())
         .unwrap_or_default();
     let log_tx = log_handle.map(|h| h.tx);
-    let (output_tx, output_task) = output_pipe::spawn_output_pipe(on_data, log_tx);
+    let (output_tx, output_task) =
+        output_pipe::spawn_output_pipe(log_label.clone(), on_data, log_tx);
 
     let handle = SessionHandle {
         tx: cmd_tx.clone(),
@@ -393,7 +399,8 @@ pub async fn ssh_open_pty(
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Cmd>(64);
     let channel_id = channel.id();
-    let (output_tx, output_task) = output_pipe::spawn_output_pipe(on_data, None);
+    let (output_tx, output_task) =
+        output_pipe::spawn_output_pipe(session_id.clone(), on_data, None);
 
     let handle = SessionHandle {
         tx: cmd_tx.clone(),

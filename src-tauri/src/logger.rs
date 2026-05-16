@@ -43,7 +43,7 @@ pub async fn start_logger(label: &str) -> Result<LoggerHandle, String> {
     let safe_label = sanitize(label);
     let path = dir.join(format!("{}_{}.log", stamp, safe_label));
 
-    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1024);
     let path_for_task = path.clone();
 
     tokio::spawn(async move {

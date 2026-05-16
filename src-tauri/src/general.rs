@@ -56,6 +56,10 @@ pub struct GeneralSettings {
     /// strip; lets terminals reclaim the row when not in use.
     #[serde(default = "default_command_bar_auto_hide")]
     pub command_bar_auto_hide: bool,
+    /// Write raw PTY output to per-session log files. Disabling this avoids
+    /// disk IO during burst output.
+    #[serde(default = "default_session_logging_enabled")]
+    pub session_logging_enabled: bool,
 }
 
 impl Default for GeneralSettings {
@@ -74,6 +78,7 @@ impl Default for GeneralSettings {
             acrylic_enabled: default_acrylic_enabled(),
             acrylic_opacity: default_acrylic_opacity(),
             command_bar_auto_hide: default_command_bar_auto_hide(),
+            session_logging_enabled: default_session_logging_enabled(),
         }
     }
 }
@@ -110,6 +115,9 @@ fn default_acrylic_opacity() -> f32 {
 }
 fn default_command_bar_auto_hide() -> bool {
     false
+}
+fn default_session_logging_enabled() -> bool {
+    true
 }
 
 pub fn general_path() -> PathBuf {

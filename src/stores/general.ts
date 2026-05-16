@@ -15,6 +15,7 @@ const defaults: GeneralSettings = {
   acrylic_enabled: false,
   acrylic_opacity: 0.75,
   command_bar_auto_hide: false,
+  session_logging_enabled: true,
 };
 
 const DEFAULT_TERM_FONT_STACK = '"JetBrains Mono", "Cascadia Code", Consolas, monospace';

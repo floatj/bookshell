@@ -259,6 +259,8 @@ export interface GeneralSettings {
   /** Collapse the bottom command bar until the pointer hovers the trigger
    *  strip along the bottom of the terminal area. */
   command_bar_auto_hide: boolean;
+  /** Write raw PTY output to per-session log files. */
+  session_logging_enabled: boolean;
 }
 
 export interface CommandButton {

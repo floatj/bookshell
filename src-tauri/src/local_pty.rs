@@ -181,13 +181,18 @@ pub async fn local_open_pty(
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "local".to_string());
-    let log_handle = logger::start_logger(&log_label).await.ok();
+    let log_handle = if load_general().session_logging_enabled {
+        logger::start_logger(&log_label).await.ok()
+    } else {
+        None
+    };
     let log_path = log_handle
         .as_ref()
         .map(|h| h.path.clone())
         .unwrap_or_default();
     let log_tx = log_handle.map(|h| h.tx);
-    let (output_tx, output_task) = output_pipe::spawn_output_pipe(on_data, log_tx);
+    let (output_tx, output_task) =
+        output_pipe::spawn_output_pipe(log_label.clone(), on_data, log_tx);
 
     // Reader: blocking read in a dedicated OS thread, pushing bytes into the
     // bounded output pump. If the UI cannot keep up, this blocks and lets the

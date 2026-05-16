@@ -417,9 +417,18 @@ function LoggingPane(p: { logDir: string }) {
   return (
     <div>
       <div style={{ "margin-bottom": "12px" }}>
-        Logs are written automatically for every SSH session.
+        Logs are written automatically for new terminal sessions when enabled.
       </div>
       <div style={{ display: "grid", "grid-template-columns": "120px 1fr", gap: "8px", "align-items": "center" }}>
+        <label style={{ opacity: 0.7 }}>Session logs</label>
+        <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+          <input
+            type="checkbox"
+            checked={general().session_logging_enabled}
+            onChange={(e) => updateGeneral({ session_logging_enabled: e.currentTarget.checked })}
+          />
+          <span>Enabled</span>
+        </label>
         <label style={{ opacity: 0.7 }}>Directory</label>
         <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
           <code style={{ background: C.bg, border: `1px solid ${C.borderSub}`, padding: "4px 8px", "border-radius": "6px", "font-size": "12px", flex: 1, "word-break": "break-all", color: C.text2 }}>
@@ -429,7 +438,7 @@ function LoggingPane(p: { logDir: string }) {
         </div>
       </div>
       <div style={{ "margin-top": "16px", opacity: 0.6, "font-size": "12px" }}>
-        Future: strip-ANSI toggle, timestamp lines, log rotation, retention period (TODO 2-7 / Q-10 / Q-11).
+        Disabling logs improves burst-output throughput for new sessions.
       </div>
     </div>
   );
