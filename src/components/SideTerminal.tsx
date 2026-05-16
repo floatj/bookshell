@@ -180,10 +180,19 @@ function SideTerminalView(props: { sessionId: string; parentTabId: string }) {
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
   let unlisteners: Array<() => void> = [];
+  let fitRaf = 0;
+
+  function scheduleFit() {
+    if (fitRaf) return;
+    fitRaf = requestAnimationFrame(() => {
+      fitRaf = 0;
+      fit?.fit();
+    });
+  }
 
   onMount(async () => {
     term = new Terminal({
-      cursorBlink: true,
+      cursorBlink: general().cursor_blink,
       fontFamily: terminalFontFamily(),
       fontSize: general().side_font_size,
       scrollback: general().scrollback,
@@ -277,15 +286,22 @@ function SideTerminalView(props: { sessionId: string; parentTabId: string }) {
     host.addEventListener("mousedown", onMouseDown);
 
     createEffect(() => {
+      const g = general();
+      const fontSize = g.side_font_size;
+      const fontFamily = terminalFontFamily();
       if (!term) return;
-      term.options.scrollback = general().scrollback;
-      term.options.fontSize = general().side_font_size;
-      term.options.fontFamily = terminalFontFamily();
-      queueMicrotask(() => fit?.fit());
+      const geometryChanged =
+        term.options.fontSize !== fontSize ||
+        term.options.fontFamily !== fontFamily;
+      term.options.scrollback = g.scrollback;
+      term.options.fontSize = fontSize;
+      term.options.fontFamily = fontFamily;
+      term.options.cursorBlink = g.cursor_blink;
+      if (geometryChanged) scheduleFit();
     });
 
     const ro = new ResizeObserver(() => {
-      if (isSideTermOpen(props.parentTabId)) fit?.fit();
+      if (isSideTermOpen(props.parentTabId)) scheduleFit();
     });
     ro.observe(host);
 
@@ -298,6 +314,7 @@ function SideTerminalView(props: { sessionId: string; parentTabId: string }) {
   });
 
   onCleanup(() => {
+    if (fitRaf) cancelAnimationFrame(fitRaf);
     unlisteners.forEach((u) => u());
     term?.dispose();
   });

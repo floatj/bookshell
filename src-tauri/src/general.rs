@@ -60,6 +60,9 @@ pub struct GeneralSettings {
     /// disk IO during burst output.
     #[serde(default = "default_session_logging_enabled")]
     pub session_logging_enabled: bool,
+    /// Blink terminal cursors while idle.
+    #[serde(default = "default_cursor_blink")]
+    pub cursor_blink: bool,
 }
 
 impl Default for GeneralSettings {
@@ -79,6 +82,7 @@ impl Default for GeneralSettings {
             acrylic_opacity: default_acrylic_opacity(),
             command_bar_auto_hide: default_command_bar_auto_hide(),
             session_logging_enabled: default_session_logging_enabled(),
+            cursor_blink: default_cursor_blink(),
         }
     }
 }
@@ -117,6 +121,9 @@ fn default_command_bar_auto_hide() -> bool {
     false
 }
 fn default_session_logging_enabled() -> bool {
+    true
+}
+fn default_cursor_blink() -> bool {
     true
 }
 

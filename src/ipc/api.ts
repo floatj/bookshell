@@ -261,6 +261,8 @@ export interface GeneralSettings {
   command_bar_auto_hide: boolean;
   /** Write raw PTY output to per-session log files. */
   session_logging_enabled: boolean;
+  /** Blink terminal cursors while idle. */
+  cursor_blink: boolean;
 }
 
 export interface CommandButton {

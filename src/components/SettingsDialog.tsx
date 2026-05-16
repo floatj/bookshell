@@ -158,6 +158,16 @@ function GeneralPane() {
         <span style={{ "font-size": "12px", opacity: 0.7 }}>px（右側 side terminal）</span>
       </div>
 
+      <label>Cursor blink</label>
+      <label style={{ display: "flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+        <input
+          type="checkbox"
+          checked={general().cursor_blink}
+          onChange={(e) => updateGeneral({ cursor_blink: e.currentTarget.checked })}
+        />
+        <span>Enable</span>
+      </label>
+
       <label>Side tab bar</label>
       <div style={{ display: "flex", gap: "10px", "align-items": "center", "flex-wrap": "wrap" }}>
         <select

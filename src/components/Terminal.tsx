@@ -49,8 +49,9 @@ export function TerminalView(props: Props) {
   let term: Terminal | undefined;
   let fit: FitAddon | undefined;
   let search: SearchAddon | undefined;
-  let highlightAddons: SearchAddon[] = [];
+  let highlightAddons: Array<SearchAddon | undefined> = [];
   let searchInputRef: HTMLInputElement | undefined;
+  let fitRaf = 0;
 
   const [query, setQuery] = createSignal("");
   const [pwPrompt, setPwPrompt] = createSignal("");
@@ -144,13 +145,30 @@ export function TerminalView(props: Props) {
   const findNext = () => runSearch("next");
   const findPrev = () => runSearch("prev");
 
+  function scheduleFit() {
+    if (fitRaf) return;
+    fitRaf = requestAnimationFrame(() => {
+      fitRaf = 0;
+      fit?.fit();
+    });
+  }
+
+  function highlightAddonAt(index: number): SearchAddon | undefined {
+    if (!term) return undefined;
+    if (!highlightAddons[index]) {
+      const addon = new SearchAddon();
+      term.loadAddon(addon);
+      highlightAddons[index] = addon;
+    }
+    return highlightAddons[index];
+  }
+
   function applyHighlights() {
     slots.forEach((slot, i) => {
-      const addon = highlightAddons[i];
-      if (!addon) return;
-      addon.clearDecorations();
       const kw = slot.keyword.trim();
-      if (!kw) return;
+      const addon = kw ? highlightAddonAt(i) : highlightAddons[i];
+      addon?.clearDecorations();
+      if (!kw || !addon) return;
       addon.findNext(kw, {
         caseSensitive: false,
         wholeWord: false,
@@ -166,7 +184,7 @@ export function TerminalView(props: Props) {
   }
 
   function clearHighlights() {
-    highlightAddons.forEach((a) => a.clearDecorations());
+    highlightAddons.forEach((a) => a?.clearDecorations());
     DEFAULT_HIGHLIGHT_COLORS.forEach((color, i) => setSlots(i, { color, keyword: "" }));
   }
 
@@ -181,7 +199,7 @@ export function TerminalView(props: Props) {
 
   onMount(() => {
     term = new Terminal({
-      cursorBlink: true,
+      cursorBlink: general().cursor_blink,
       fontFamily: terminalFontFamily(),
       fontSize: props.tab.fontSize ?? general().font_size,
       scrollback: general().scrollback,
@@ -193,11 +211,7 @@ export function TerminalView(props: Props) {
     search = new SearchAddon();
     term.loadAddon(fit);
     term.loadAddon(search);
-    highlightAddons = DEFAULT_HIGHLIGHT_COLORS.map(() => {
-      const a = new SearchAddon();
-      term!.loadAddon(a);
-      return a;
-    });
+    highlightAddons = DEFAULT_HIGHLIGHT_COLORS.map(() => undefined);
     // Hand URL clicks off to the OS default browser via Tauri command — opening
     // them inside this WebView would navigate away from the app.
     term.loadAddon(
@@ -512,7 +526,7 @@ export function TerminalView(props: Props) {
       // `width/height: ${natural}px` styles and visually shrunk with a
       // transform, so we don't want xterm to reflow rows/cols (which would
       // signal a resize to the PTY).
-      if (props.active && !props.gridLayout) fit?.fit();
+      if (props.active && !props.gridLayout) scheduleFit();
     });
     ro.observe(host);
     onCleanup(() => ro.disconnect());
@@ -556,7 +570,7 @@ export function TerminalView(props: Props) {
     void props.tab.fitTick;
     if (props.active) {
       queueMicrotask(() => {
-        fit?.fit();
+        scheduleFit();
         if (!isSearchOpenFor(props.tab.id)) term?.focus();
       });
     }
@@ -571,7 +585,7 @@ export function TerminalView(props: Props) {
   createEffect(() => {
     const sid = props.tab.sessionId;
     if (!sid || !termReady() || !term) return;
-    queueMicrotask(() => {
+    requestAnimationFrame(() => {
       fit?.fit();
       if (term) api.sshResize(sid, term.cols, term.rows).catch(console.error);
     });
@@ -579,12 +593,19 @@ export function TerminalView(props: Props) {
 
   // Live-update term options when general settings change
   createEffect(() => {
+    const g = general();
+    const fontSize = props.tab.fontSize ?? g.font_size;
+    const fontFamily = terminalFontFamily();
     if (!term) return;
-    term.options.scrollback = general().scrollback;
-    term.options.fontSize = props.tab.fontSize ?? general().font_size;
-    term.options.fontFamily = terminalFontFamily();
+    const geometryChanged =
+      term.options.fontSize !== fontSize ||
+      term.options.fontFamily !== fontFamily;
+    term.options.scrollback = g.scrollback;
+    term.options.fontSize = fontSize;
+    term.options.fontFamily = fontFamily;
     term.options.theme = themeForCurrent();
-    queueMicrotask(() => fit?.fit());
+    term.options.cursorBlink = g.cursor_blink;
+    if (geometryChanged) scheduleFit();
   });
 
   // When ENTERING grid mode (Exposé), force a redraw of every terminal —
@@ -595,7 +616,7 @@ export function TerminalView(props: Props) {
   let gridWasOpen = false;
   createEffect(() => {
     const inGrid = !!props.gridLayout;
-    if (inGrid && !gridWasOpen && term) {
+    if (inGrid && !gridWasOpen && term && !props.active) {
       requestAnimationFrame(() => {
         try { term?.refresh(0, term.rows - 1); } catch {}
       });
@@ -610,7 +631,10 @@ export function TerminalView(props: Props) {
     }
   });
 
-  onCleanup(() => term?.dispose());
+  onCleanup(() => {
+    if (fitRaf) cancelAnimationFrame(fitRaf);
+    term?.dispose();
+  });
 
   // Outer wrapper style switches between "stacked" (default — absolute,
   // visibility-toggled) and "grid" (fixed natural size, CSS-scaled). In
